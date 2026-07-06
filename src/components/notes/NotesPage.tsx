@@ -596,7 +596,7 @@ export default function NotesPage() {
             content: '', // Will be loaded on demand
             filePath: `${selected}/${entry.name}`,
             _isLocalFile: true,
-            _fileRef: entry.path,
+            _fileRef: entry.name,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             noteType: 'normal' as const,
