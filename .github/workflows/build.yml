@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest]
+        platform: [windows-latest, macos-latest]
 
     runs-on: ${{ matrix.platform }}
     
@@ -32,13 +32,9 @@ jobs:
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
       
-      - name: Install Windows dependencies
-        if: runner.os == 'Windows'
-        run: |
-          npm install
+      - name: Install dependencies
+        run: npm install
       
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -74,6 +70,14 @@ jobs:
           name: duNote-windows-nsis
           path: src-tauri/target/release/bundle/nsis/*.exe
           retention-days: 30
+      
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: duNote-macos-dmg
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          retention-days: 30
 
   create-release:
     needs: build
@@ -94,6 +98,7 @@ jobs:
           files: |
             artifacts/**/*.msi
             artifacts/**/*.exe
+            artifacts/**/*.dmg
           draft: false
           generate_release_notes: true
         env:
