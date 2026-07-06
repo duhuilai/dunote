@@ -52,14 +52,6 @@
       },
       "wix": {
         "language": "zh-CN"
-      },
-      "nsis": {
-        "installerIcon": "icons/icon.ico",
-        "headerImage": null,
-        "sidebarImage": null,
-        "license": null,
-        "installMode": "both",
-        "languages": ["SimpChinese"]
       }
     },
     "android": {
