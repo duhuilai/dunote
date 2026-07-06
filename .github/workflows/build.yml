@@ -100,6 +100,17 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/*.dmg
           draft: false
-          generate_release_notes: true
+          body: |
+            ## duNote v0.1.0
+
+            ### 新功能
+            - 基于 Tauri 2 + React + Tiptap v3 的跨平台笔记管理应用
+            - 支持本地文件夹浏览和笔记文件读写
+            - 支持 Markdown 富文本编辑
+            - 文件夹树形结构管理笔记
+
+            ### 平台支持
+            - Windows (MSI / NSIS)
+            - macOS (DMG)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
