@@ -32,6 +32,7 @@ import { exportNote, type ExportFormat } from '@/utils/exportNote'
 import { syncHistoryToRemote, restoreHistoryFromRemote } from '@/utils/sync'
 import { useAppStore } from '@/store'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
+import TurndownService from 'turndown'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -101,15 +102,23 @@ export default function NoteEditor({ note }: NoteEditorProps) {
           updateNote(note.id, { content })
           
           // If this is a local file, write back to source file using Tauri API
-          if ((note as any)._isLocalFile && (note as any)._fileRef) {
+          if ((note as any)._isLocalFile) {
             const filePath = (note as any).filePath as string
             try {
-              await writeTextFile(filePath, content)
+              // Convert HTML back to Markdown for .md files
+              let fileContent = content
+              if (filePath.toLowerCase().endsWith('.md')) {
+                const turndown = new TurndownService({
+                  headingStyle: 'atx',
+                  codeBlockStyle: 'fenced',
+                  bulletListMarker: '-',
+                })
+                fileContent = turndown.turndown(content)
+              }
+              await writeTextFile(filePath, fileContent)
               console.log(`[Tauri] Successfully wrote to file: ${filePath}`)
             } catch (error) {
               console.error(`[Tauri] Failed to write to file: ${filePath}`, error)
-              // Don't show alert here to avoid interrupting user's editing flow
-              // The error is logged for debugging
             }
           }
         }

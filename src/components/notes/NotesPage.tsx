@@ -9,7 +9,9 @@ import NoteEditor from './NoteEditor'
 import HistoryModal from './HistoryModal'
 import { exportNote, type ExportFormat } from '@/utils/exportNote'
 import { open } from '@tauri-apps/plugin-dialog'
-import { readDir, readTextFile, writeTextFile, mkdir } from '@tauri-apps/plugin-fs'
+import { readDir, readTextFile, writeTextFile, mkdir, exists } from '@tauri-apps/plugin-fs'
+import { homeDir } from '@tauri-apps/api/path'
+import { marked } from 'marked'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -536,6 +538,68 @@ export default function NotesPage() {
   const [newFolderName, setNewFolderName] = useState('')
   const newFolderInputRef             = useRef<HTMLInputElement>(null)
 
+  // ─── Persist selected folder across sessions ───
+  const CONFIG_FILE = '.dunote-config.json'
+  const getConfigPath = async () => {
+    const home = await homeDir()
+    return home + CONFIG_FILE
+  }
+
+  // Load saved folder on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const configPath = await getConfigPath()
+        const configExists = await exists(configPath)
+        if (configExists) {
+          const raw = await readTextFile(configPath)
+          const config = JSON.parse(raw)
+          if (config.lastLocalFolder) {
+            console.log(`[Persistence] Restoring folder: ${config.lastLocalFolder}`)
+            // Re-scan the saved folder to rebuild the tree
+            const result = await scanDirectory(config.lastLocalFolder, null, config.lastLocalFolder)
+            const rootFolderName = config.lastLocalFolder.split('/').pop() || config.lastLocalFolder.split('\\').pop() || config.lastLocalFolder
+            const rootFolder: import('@/types').NoteFolder = {
+              id: 'local-root', name: rootFolderName, parentId: null,
+              path: config.lastLocalFolder, expanded: true, children: [],
+            }
+            const buildChildren = (folder: import('@/types').NoteFolder, allFolders: import('@/types').NoteFolder[]) => {
+              const children = allFolders.filter(f => f.parentId === folder.id)
+              folder.children = children.map(f => {
+                const child = { ...f }
+                buildChildren(child, allFolders)
+                return child
+              })
+            }
+            buildChildren(rootFolder, result.folders)
+            setLocalFolders([rootFolder])
+            setLocalNotes(result.notes)
+            setSelectedLocalFolder(config.lastLocalFolder)
+            setSelectedFolderId('local-root')
+          }
+        }
+      } catch (err) {
+        console.warn('[Persistence] Failed to load config:', err)
+      }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save folder path when it changes
+  useEffect(() => {
+    if (selectedLocalFolder) {
+      (async () => {
+        try {
+          const configPath = await getConfigPath()
+          const config = { lastLocalFolder: selectedLocalFolder }
+          await writeTextFile(configPath, JSON.stringify(config, null, 2))
+          console.log(`[Persistence] Saved folder: ${selectedLocalFolder}`)
+        } catch (err) {
+          console.warn('[Persistence] Failed to save config:', err)
+        }
+      })()
+    }
+  }, [selectedLocalFolder])
+
   // Close type menu when clicking outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -761,7 +825,13 @@ export default function NotesPage() {
   const handleSelectLocalNote = useCallback(async (noteId: string, filePath: string) => {
     try {
       // Read file content
-      const content = await readTextFile(filePath)
+      const rawContent = await readTextFile(filePath)
+      
+      // Convert Markdown to HTML for .md files so Tiptap can render them
+      let content = rawContent
+      if (filePath.toLowerCase().endsWith('.md')) {
+        content = await marked(rawContent)
+      }
       
       // Check if it's a local note (in localNotes state) or a store note
       const isLocalNote = localNotes.some(n => n.id === noteId)
@@ -775,7 +845,7 @@ export default function NotesPage() {
         updateNote(noteId, { content })
       }
       
-      console.log(`Loaded file content: ${filePath}`)
+      console.log(`Loaded file content: ${filePath} (converted: ${filePath.toLowerCase().endsWith('.md')})`)
     } catch (error) {
       console.error('Failed to read file:', error)
       alert('读取文件失败: ' + (error instanceof Error ? error.message : String(error)))
@@ -983,7 +1053,16 @@ export default function NotesPage() {
             }}>
               <span>📁 本地文件夹</span>
               <button
-                onClick={() => { setSelectedLocalFolder(null); setLocalFolders([]); setLocalNotes([]) }}
+                onClick={async () => {
+                  setSelectedLocalFolder(null)
+                  setLocalFolders([])
+                  setLocalNotes([])
+                  // Clear persisted config
+                  try {
+                    const configPath = await getConfigPath()
+                    await writeTextFile(configPath, JSON.stringify({}))
+                  } catch (e) { console.warn('Failed to clear config:', e) }
+                }}
                 style={{
                   padding: '2px 6px',
                   borderRadius: '4px',
