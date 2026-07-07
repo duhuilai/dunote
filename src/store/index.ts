@@ -132,15 +132,21 @@ export const useAppStore = create<AppState>((set) => ({
     const historyEntry = s.history.find((h) => h.id === historyId);
     if (!historyEntry) return s;
     
-    // Create a new history entry for the restoration action
-    const restoreEntry: NoteHistory = {
-      id: `h-${Date.now()}`,
-      noteId: historyEntry.noteId,
-      title: historyEntry.title,
-      content: historyEntry.content,
-      timestamp: new Date().toISOString(),
-      action: 'edit',
-    };
+    // Find the current note to record its content BEFORE restoration
+    const currentNote = s.notes.find((n) => n.id === historyEntry.noteId);
+    
+    // If note not in store (e.g., local file), skip creating history entry here —
+    // it will be handled by the caller (handleRestoreLocalNote) with correct content
+    if (!currentNote) {
+      return {
+        notes: s.notes,
+        history: s.history,
+        showHistory: false,
+      };
+    }
+    
+    // If content is the same, no need to create a new history entry
+    const contentChanged = currentNote.content !== historyEntry.content;
     
     return {
       notes: s.notes.map((n) => 
@@ -148,7 +154,14 @@ export const useAppStore = create<AppState>((set) => ({
           ? { ...n, content: historyEntry.content, title: historyEntry.title, updatedAt: new Date().toISOString() }
           : n
       ),
-      history: [restoreEntry, ...s.history],
+      history: contentChanged ? [{
+        id: `h-${Date.now()}`,
+        noteId: historyEntry.noteId,
+        title: historyEntry.title,
+        content: currentNote.content,
+        timestamp: new Date().toISOString(),
+        action: 'edit',
+      }, ...s.history] : s.history,
       showHistory: false,
     };
   }),

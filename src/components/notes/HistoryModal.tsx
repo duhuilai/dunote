@@ -19,7 +19,7 @@ const C = {
   surface: '#FFFFFF',
 } as const
 
-export default function HistoryModal() {
+export default function HistoryModal({ onRestore }: { onRestore?: (noteId: string, content: string, title: string, filePath?: string) => void }) {
   const { showHistory, setShowHistory, history, selectedNoteId, restoreFromHistory, deleteHistoryEntry } = useAppStore()
   const [previewHistory, setPreviewHistory] = useState<any | null>(null)
 
@@ -28,8 +28,13 @@ export default function HistoryModal() {
   const noteHistory = history.filter((h) => h.noteId === selectedNoteId)
 
   const handleRestore = (historyId: string) => {
+    const entry = noteHistory.find((h) => h.id === historyId)
     restoreFromHistory(historyId)
     setPreviewHistory(null)
+    // Notify parent so it can handle local file writes
+    if (onRestore && entry) {
+      onRestore(entry.noteId, entry.content, entry.title, (entry as any).filePath)
+    }
   }
 
   const handleDelete = (historyId: string) => {

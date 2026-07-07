@@ -16,7 +16,7 @@ const sidebarStyle: React.CSSProperties = {
   width: 220,
   minWidth: 220,
   maxWidth: 220,
-  background: '#0F172A',
+  background: '#F1F5F9',
   display: 'flex',
   flexDirection: 'column',
   flexShrink: 0,
@@ -29,7 +29,7 @@ const collapsedSidebarStyle: React.CSSProperties = {
   width: 64,
   minWidth: 64,
   maxWidth: 64,
-  background: '#0F172A',
+  background: '#F1F5F9',
   display: 'flex',
   flexDirection: 'column',
   flexShrink: 0,
@@ -47,7 +47,7 @@ export default function Sidebar() {
   return (
     <div style={sidebarCollapsed ? collapsedSidebarStyle : sidebarStyle}>
       {/* Logo */}
-      <div style={{ padding: sidebarCollapsed ? '20px 14px 16px' : '20px 20px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+      <div style={{ padding: sidebarCollapsed ? '20px 14px 16px' : '20px 20px 16px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: sidebarCollapsed ? 'center' : 'flex-start' }}>
           <img 
             src="/logo.png" 
@@ -62,8 +62,8 @@ export default function Sidebar() {
           />
           {!sidebarCollapsed && (
             <div>
-              <div style={{ fontWeight: 700, fontSize: 16, color: '#fff', lineHeight: 1.2 }}>duNote</div>
-              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: 1 }}>NOTE MANAGER</div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: '#1E293B', lineHeight: 1.2 }}>duNote</div>
+              <div style={{ fontSize: 10, color: '#94A3B8', letterSpacing: 1 }}>NOTE MANAGER</div>
             </div>
           )}
         </div>
@@ -72,37 +72,30 @@ export default function Sidebar() {
       {/* Toggle Button */}
       <button
         onClick={toggleSidebar}
+        title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
         style={{
-          position: 'absolute',
-          right: -12,
-          top: 28,
-          width: 24,
-          height: 24,
-          borderRadius: '50%',
-          border: '1px solid rgba(255,255,255,0.2)',
-          background: '#0F172A',
-          color: 'rgba(255,255,255,0.6)',
-          cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 10,
+          justifyContent: sidebarCollapsed ? 'center' : 'flex-end',
+          padding: sidebarCollapsed ? '6px 0' : '6px 14px',
+          border: 'none',
+          background: 'transparent',
+          color: '#94A3B8',
+          cursor: 'pointer',
           transition: 'all 0.15s',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = '#1E293B'
-          e.currentTarget.style.color = '#fff'
+          e.currentTarget.style.color = '#1E293B'
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = '#0F172A'
-          e.currentTarget.style.color = 'rgba(255,255,255,0.6)'
+          e.currentTarget.style.color = '#94A3B8'
         }}
       >
-        {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+        {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
       </button>
 
       {/* Navigation */}
-      <nav style={{ flex: 1, padding: '12px 10px', overflowY: 'auto' }}>
+      <nav style={{ flex: 1, padding: '4px 10px 12px', overflowY: 'auto' }}>
         {navItems.map(({ key, label, icon: Icon }) => {
           const isActive = currentPage === key
           return (
@@ -118,8 +111,8 @@ export default function Sidebar() {
                 padding: sidebarCollapsed ? '10px 0' : '10px 14px',
                 borderRadius: 8,
                 border: 'none',
-                background: isActive ? '#1E3A5F' : 'transparent',
-                color: isActive ? '#fff' : 'rgba(255,255,255,0.6)',
+                background: isActive ? 'rgba(37,99,235,0.1)' : 'transparent',
+                color: isActive ? '#2563EB' : '#475569',
                 cursor: 'pointer',
                 fontSize: 14,
                 fontWeight: isActive ? 600 : 400,
@@ -130,7 +123,7 @@ export default function Sidebar() {
                 justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
               }}
               onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.background = '#1E293B'
+                if (!isActive) e.currentTarget.style.background = '#E2E8F0'
               }}
               onMouseLeave={(e) => {
                 if (!isActive) e.currentTarget.style.background = 'transparent'
@@ -146,7 +139,7 @@ export default function Sidebar() {
       {/* User */}
       <div style={{
         padding: sidebarCollapsed ? '12px 14px' : '12px 14px',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
+        borderTop: '1px solid rgba(0,0,0,0.08)',
         display: 'flex', 
         alignItems: 'center', 
         gap: 10,
@@ -162,8 +155,8 @@ export default function Sidebar() {
         </div>
         {!sidebarCollapsed && (
           <div>
-            <div style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.9)' }}>开发者</div>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>v1.0.0</div>
+            <div style={{ fontSize: 13, fontWeight: 500, color: '#1E293B' }}>开发者</div>
+            <div style={{ fontSize: 11, color: '#94A3B8' }}>v1.0.0</div>
           </div>
         )}
       </div>

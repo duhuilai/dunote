@@ -650,6 +650,7 @@ export default function NotesPage() {
     showOutline, setShowOutline,
     deleteNote,
     updateNote,
+    addHistoryEntry,
   } = useAppStore()
 
   const folders        = useAppStore((s) => s.folders)
@@ -1044,6 +1045,34 @@ export default function NotesPage() {
       alert('读取文件失败: ' + (error instanceof Error ? error.message : String(error)))
     }
   }, [updateNote, localNotes])
+
+  // Handler for restoring a history version of a local file
+  const handleRestoreLocalNote = useCallback(async (noteId: string, content: string, title: string) => {
+    const localNote = localNotes.find(n => n.id === noteId)
+    if (!localNote?._isLocalFile || !localNote.filePath) return
+    
+    // Create history entry with the CURRENT content (before restore) since
+    // restoreFromHistory can't find local files in the Zustand store
+    const currentContent = localNote.content || ''
+    if (currentContent !== content) {
+      addHistoryEntry({
+        noteId,
+        title: localNote.title || title,
+        content: currentContent,
+        action: 'edit',
+      })
+    }
+    
+    try {
+      await writeTextFile(localNote.filePath, content)
+      console.log(`[Restore] Wrote restored content to: ${localNote.filePath}`)
+      setLocalNotes(prev => prev.map(n =>
+        n.id === noteId ? { ...n, content, updatedAt: new Date().toISOString() } : n
+      ))
+    } catch (error) {
+      console.error('[Restore] Failed to write restored content:', error)
+    }
+  }, [localNotes, addHistoryEntry])
 
   // ─── Delete handlers ───
   const handleDeleteNote = useCallback(async (note: any) => {
@@ -1670,7 +1699,7 @@ export default function NotesPage() {
       )}
 
       {/* History Modal */}
-      <HistoryModal />
+      <HistoryModal onRestore={handleRestoreLocalNote} />
 
       {/* ── New Folder Dialog ─── */}
       {showNewFolderDialog && (

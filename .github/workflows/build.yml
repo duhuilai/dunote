@@ -92,11 +92,24 @@ jobs:
         with:
           path: artifacts
       
-      - name: Delete existing release
+      - name: Clean existing release assets
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          echo "Cleaning up existing release: $TAG"
-          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || echo "No existing release to delete"
+          echo "Cleaning existing release assets for: $TAG"
+          # Get release ID (fail silently if no release exists)
+          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/$TAG --jq '.id' 2>/dev/null || echo "")
+          if [ -z "$RELEASE_ID" ]; then
+            echo "No existing release found, skipping cleanup."
+          else
+            echo "Found release ID: $RELEASE_ID"
+            # List and delete each asset
+            ASSET_IDS=$(gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq '.[].id' 2>/dev/null || echo "")
+            for ASSET_ID in $ASSET_IDS; do
+              echo "Deleting asset ID: $ASSET_ID"
+              gh api --method DELETE repos/${{ github.repository }}/releases/assets/$ASSET_ID
+            done
+            echo "All old assets deleted."
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       

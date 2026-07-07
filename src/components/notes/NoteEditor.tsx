@@ -131,9 +131,9 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   useEffect(() => {
     if (editor && note.content !== editor.getHTML()) {
       console.log(`[NoteEditor] Syncing content for note ${note.id}, content length: ${note.content?.length || 0}`)
-      editor.commands.setContent(note.content)
-      // Update baseline so auto-save won't trigger for this content
+      // Update baseline BEFORE setContent to prevent onUpdate auto-save from triggering
       baselineContentRef.current = note.content || ''
+      editor.commands.setContent(note.content)
       console.log(`[NoteEditor] Content set and baseline updated`)
     }
   }, [note.id, note.content])

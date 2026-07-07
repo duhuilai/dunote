@@ -22,9 +22,7 @@ function App() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F8FAFC' }}>
-      <div style={{ position: 'relative' }}>
-        <Sidebar />
-      </div>
+      <Sidebar />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
         {renderPage()}
       </div>
