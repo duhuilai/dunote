@@ -60,7 +60,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   const [showExportMenu, setShowExportMenu] = useState(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const isSettingContentRef = useRef(false)
+  const baselineContentRef = useRef<string>(note.content || '')
 
   const editor = useEditor({
     extensions: [
@@ -92,15 +92,14 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       },
     },
     onUpdate: ({ editor }) => {
-      // Skip auto-save when content is set programmatically (e.g. loading a file)
-      if (isSettingContentRef.current) return
       // Debounced auto-save (1.5 seconds after last edit)
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
       }
       saveTimeoutRef.current = setTimeout(async () => {
         const content = editor.getHTML()
-        if (content !== note.content) {
+        // Only save if content actually changed from the baseline (last loaded/saved content)
+        if (content !== baselineContentRef.current) {
           // Update note in store
           updateNote(note.id, { content })
           
@@ -124,6 +123,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
               console.error(`[Tauri] Failed to write to file: ${filePath}`, error)
             }
           }
+          // Update baseline after saving
+          baselineContentRef.current = content
         }
       }, 1500)
     },
@@ -140,12 +141,11 @@ export default function NoteEditor({ note }: NoteEditorProps) {
 
   useEffect(() => {
     if (editor && note.content !== editor.getHTML()) {
-      console.log(`[NoteEditor] Syncing content for note ${note.id}, content length: ${note.content?.length || 0}, first 100 chars:`, note.content?.substring(0, 100))
-      isSettingContentRef.current = true
+      console.log(`[NoteEditor] Syncing content for note ${note.id}, content length: ${note.content?.length || 0}`)
       editor.commands.setContent(note.content)
-      // Reset flag after a tick to allow onUpdate to be skipped
-      setTimeout(() => { isSettingContentRef.current = false }, 0)
-      console.log(`[NoteEditor] Content set successfully`)
+      // Update baseline so auto-save won't trigger for this content
+      baselineContentRef.current = note.content || ''
+      console.log(`[NoteEditor] Content set and baseline updated`)
     }
   }, [note.id, note.content])
 
