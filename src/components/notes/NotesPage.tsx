@@ -869,19 +869,34 @@ export default function NotesPage() {
       }
 
       console.log(`Created folder: ${targetPath}`)
-      
-      // Update selected folder to the new one
-      setSelectedLocalFolder(targetPath)
-      
       setShowNewFolderDialog(false)
       setNewFolderName('')
-      
-      alert(`文件夹已创建: ${folderName}\n路径: ${targetPath}`)
+
+      // Re-scan to refresh the sidebar tree
+      if (selectedLocalFolder) {
+        const result = await scanDirectory(selectedLocalFolder, null, selectedLocalFolder)
+        const rootFolderName = selectedLocalFolder.split('/').pop() || selectedLocalFolder.split('\\').pop() || selectedLocalFolder
+        const rootFolder: import('@/types').NoteFolder = {
+          id: 'local-root', name: rootFolderName, parentId: null,
+          path: selectedLocalFolder, expanded: true, children: [],
+        }
+        const buildChildren = (folder: import('@/types').NoteFolder, allFolders: import('@/types').NoteFolder[]) => {
+          const children = allFolders.filter(f => f.parentId === folder.id)
+          folder.children = children.map(f => {
+            const child = { ...f }
+            buildChildren(child, allFolders)
+            return child
+          })
+        }
+        buildChildren(rootFolder, result.folders)
+        setLocalFolders([rootFolder])
+        setLocalNotes(result.notes)
+      }
     } catch (error) {
       console.error('Failed to create folder:', error)
       alert('创建文件夹失败: ' + (error instanceof Error ? error.message : String(error)))
     }
-  }, [newFolderName, selectedLocalFolder])
+  }, [newFolderName, selectedLocalFolder, scanDirectory])
 
   // Handler for selecting a local file note
   const handleSelectLocalNote = useCallback(async (noteId: string, filePath: string) => {
