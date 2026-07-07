@@ -114,7 +114,7 @@ function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect }: {
 function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, level = 0 }: {
   folders: any[]; filteredNotes: any[]; onNoteContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void; level?: number
 }) {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ f1: true, f2: true })
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({ f1: true, f2: true, 'local-root': true })
   const selectedFolderId = useAppStore((s) => s.selectedFolderId)
   const setSelectedFolderId = useAppStore((s) => s.setSelectedFolderId)
   const selectedNoteId = useAppStore((s) => s.selectedNoteId)
@@ -490,7 +490,7 @@ function OutlineContent({ html }: { html: string }) {
 export default function NotesPage() {
   const {
     notes, selectedNoteId, setSelectedNoteId,
-    selectedFolderId,
+    selectedFolderId, setSelectedFolderId,
     searchQuery, setSearchQuery,
     showOutline, setShowOutline,
     deleteNote,
@@ -512,6 +512,8 @@ export default function NotesPage() {
   
   // Local folder state (for Tauri desktop app)
   const [selectedLocalFolder, setSelectedLocalFolder] = useState<string | null>(null)
+  const [localFolders, setLocalFolders] = useState<import('@/types').NoteFolder[]>([])
+  const [localNotes, setLocalNotes] = useState<import('@/types').Note[]>([])
   
   // New folder creation state
   const [showNewFolderDialog, setShowNewFolderDialog] = useState(false)
@@ -529,11 +531,13 @@ export default function NotesPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showTypeMenu])
 
-  const filteredNotes = notes.filter((n) =>
+  // When a local folder is selected, use local notes; otherwise use store notes
+  const allDisplayNotes = selectedLocalFolder ? localNotes : notes
+  const filteredNotes = allDisplayNotes.filter((n) =>
     n.title.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const selectedNote = notes.find((n) => n.id === selectedNoteId)
+  const selectedNote = [...notes, ...localNotes].find((n) => n.id === selectedNoteId)
 
   const handleContextMenu = useCallback((e: React.MouseEvent, note: any) => {
     e.preventDefault()
@@ -568,9 +572,67 @@ export default function NotesPage() {
     setSelectedNoteId(newNote.id)
   }
 
+  // Recursively scan a directory to build folder tree and collect note files
+  const scanDirectory = useCallback(async (dirPath: string, parentId: string | null, parentPath: string): Promise<{ folders: import('@/types').NoteFolder[]; notes: import('@/types').Note[] }> => {
+    const folders: import('@/types').NoteFolder[] = []
+    const notes: import('@/types').Note[] = []
+    let idCounter = 0
+
+    const scan = async (currentPath: string, currentParentId: string | null): Promise<void> => {
+      try {
+        const entries = await readDir(currentPath)
+        // Sort: directories first, then files, alphabetically within each group
+        const dirs = entries.filter(e => e.isDirectory).sort((a, b) => a.name.localeCompare(b.name))
+        const files = entries.filter(e => e.isFile).sort((a, b) => a.name.localeCompare(b.name))
+
+        // Process files
+        for (const entry of files) {
+          const name = entry.name.toLowerCase()
+          if (name.endsWith('.md') || name.endsWith('.txt') || name.endsWith('.html')) {
+            const fullPath = currentPath + '/' + entry.name
+            const now = new Date().toISOString()
+            notes.push({
+              id: `local-${fullPath}`,
+              title: entry.name.replace(/\.(md|txt|html)$/i, ''),
+              content: '', // Will be loaded on demand when selected
+              filePath: fullPath,
+              createdAt: now,
+              updatedAt: now,
+              noteType: 'normal',
+              folderId: currentParentId || 'local-root',
+              tags: [] as string[],
+              _isLocalFile: true,
+            } as any)
+          }
+        }
+
+        // Process subdirectories recursively
+        for (const dir of dirs) {
+          // Skip hidden directories
+          if (dir.name.startsWith('.')) continue
+          const subPath = currentPath + '/' + dir.name
+          const folderId = `local-folder-${subPath}`
+          folders.push({
+            id: folderId,
+            name: dir.name,
+            parentId: currentParentId,
+            path: subPath,
+            expanded: false,
+            children: [],
+          })
+          await scan(subPath, folderId)
+        }
+      } catch (err) {
+        console.warn(`Failed to read directory ${currentPath}:`, err)
+      }
+    }
+
+    await scan(dirPath, parentId)
+    return { folders, notes }
+  }, [])
+
   const handleSelectLocalFolder = useCallback(async () => {
     try {
-      // Open native folder selection dialog
       const selected = await open({
         directory: true,
         multiple: false,
@@ -580,41 +642,45 @@ export default function NotesPage() {
       if (selected && typeof selected === 'string') {
         setSelectedLocalFolder(selected)
         
-        // Read directory contents
-        const entries = await readDir(selected)
+        // Recursively scan the selected directory
+        const result = await scanDirectory(selected, null, selected)
         
-        // Filter for markdown and text files
-        const files = entries
-          .filter(entry => {
-            if (!entry.isFile) return false
-            const name = entry.name.toLowerCase()
-            return name.endsWith('.md') || name.endsWith('.txt') || name.endsWith('.html')
-          })
-          .map(entry => ({
-            id: `${selected}/${entry.name}`,
-            title: entry.name.replace(/\.(md|txt|html)$/i, ''),
-            content: '', // Will be loaded on demand
-            filePath: `${selected}/${entry.name}`,
-            _isLocalFile: true,
-            _fileRef: entry.name,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            noteType: 'normal' as const,
-            folderId: 'local',
-            tags: [] as string[],
-          }))
+        // Create a root folder entry for the selected directory
+        const rootFolderName = selected.split('/').pop() || selected.split('\\').pop() || selected
+        const rootFolder: import('@/types').NoteFolder = {
+          id: 'local-root',
+          name: rootFolderName,
+          parentId: null,
+          path: selected,
+          expanded: true,
+          children: result.folders.filter(f => f.parentId === null),
+        }
         
-        console.log(`Loaded ${files.length} files from ${selected}`)
+        // Build the children references for nested folders
+        const buildChildren = (folder: import('@/types').NoteFolder, allFolders: import('@/types').NoteFolder[]) => {
+          folder.children = allFolders
+            .filter(f => f.parentId === folder.id)
+            .map(f => {
+              const child = { ...f }
+              buildChildren(child, allFolders)
+              return child
+            })
+        }
+        buildChildren(rootFolder, result.folders)
         
-        // For now, just store the file list in a way that can be displayed
-        // In a full implementation, you'd integrate this with your notes store
-        alert(`已选择文件夹: ${selected}\n找到 ${files.length} 个文件`)
+        setLocalFolders([rootFolder])
+        setLocalNotes(result.notes)
+        
+        // Select the root folder
+        setSelectedFolderId('local-root')
+        
+        console.log(`Scanned ${selected}: ${result.folders.length} folders, ${result.notes.length} files`)
       }
     } catch (error) {
       console.error('Failed to open folder:', error)
       alert('打开文件夹失败: ' + (error instanceof Error ? error.message : String(error)))
     }
-  }, [])
+  }, [scanDirectory])
 
   const handleCreateNewFolder = useCallback(() => {
     setShowNewFolderDialog(true)
@@ -670,15 +736,24 @@ export default function NotesPage() {
       // Read file content
       const content = await readTextFile(filePath)
       
-      // Update the note with the file content
-      updateNote(noteId, { content })
+      // Check if it's a local note (in localNotes state) or a store note
+      const isLocalNote = localNotes.some(n => n.id === noteId)
+      if (isLocalNote) {
+        // Update in localNotes state
+        setLocalNotes(prev => prev.map(n => 
+          n.id === noteId ? { ...n, content, updatedAt: new Date().toISOString() } : n
+        ))
+      } else {
+        // Update in store
+        updateNote(noteId, { content })
+      }
       
       console.log(`Loaded file content: ${filePath}`)
     } catch (error) {
       console.error('Failed to read file:', error)
       alert('读取文件失败: ' + (error instanceof Error ? error.message : String(error)))
     }
-  }, [updateNote])
+  }, [updateNote, localNotes])
 
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 B'
@@ -892,7 +967,7 @@ export default function NotesPage() {
             }}>
               <span>📁 本地文件夹</span>
               <button
-                onClick={() => { setSelectedLocalFolder(null) }}
+                onClick={() => { setSelectedLocalFolder(null); setLocalFolders([]); setLocalNotes([]) }}
                 style={{
                   padding: '2px 6px',
                   borderRadius: '4px',
@@ -956,7 +1031,7 @@ export default function NotesPage() {
         {/* 3. Folder Tree with notes inside */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
           <FolderTree
-            folders={folders}
+            folders={selectedLocalFolder ? localFolders : folders}
             filteredNotes={filteredNotes}
             onNoteContextMenu={handleContextMenu}
             onNoteSelect={handleSelectLocalNote}
