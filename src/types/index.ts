@@ -9,6 +9,7 @@ export interface Note {
   createdAt: string;
   updatedAt: string;
   noteType?: string;
+  _isLocalFile?: boolean;
 }
 
 export interface NoteFolder {
