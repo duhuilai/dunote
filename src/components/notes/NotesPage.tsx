@@ -120,6 +120,22 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, l
   const selectedNoteId = useAppStore((s) => s.selectedNoteId)
   const setSelectedNoteId = useAppStore((s) => s.setSelectedNoteId)
 
+  // Sync expanded state when folders prop changes (e.g., when switching to local folders)
+  useEffect(() => {
+    if (folders.length > 0) {
+      setExpanded(prev => {
+        const newExpanded = { ...prev }
+        // Ensure root folders are expanded
+        folders.forEach(f => {
+          if (newExpanded[f.id] === undefined) {
+            newExpanded[f.id] = true
+          }
+        })
+        return newExpanded
+      })
+    }
+  }, [folders])
+
   const handleOpenFolder = useCallback((folder: any) => {
     const folderPath = folder.path || '默认笔记目录'
     
@@ -576,14 +592,17 @@ export default function NotesPage() {
   const scanDirectory = useCallback(async (dirPath: string, parentId: string | null, parentPath: string): Promise<{ folders: import('@/types').NoteFolder[]; notes: import('@/types').Note[] }> => {
     const folders: import('@/types').NoteFolder[] = []
     const notes: import('@/types').Note[] = []
-    let idCounter = 0
 
     const scan = async (currentPath: string, currentParentId: string | null): Promise<void> => {
       try {
+        console.log(`[scanDirectory] Reading: ${currentPath}`)
         const entries = await readDir(currentPath)
+        console.log(`[scanDirectory] Found ${entries.length} entries in ${currentPath}:`, entries.map(e => ({ name: e.name, isDirectory: e.isDirectory })))
+        
         // Sort: directories first, then files, alphabetically within each group
         const dirs = entries.filter(e => e.isDirectory).sort((a, b) => a.name.localeCompare(b.name))
         const files = entries.filter(e => e.isFile).sort((a, b) => a.name.localeCompare(b.name))
+        console.log(`[scanDirectory] Dirs: ${dirs.length}, Files: ${files.length}`)
 
         // Process files
         for (const entry of files) {
@@ -612,6 +631,7 @@ export default function NotesPage() {
           if (dir.name.startsWith('.')) continue
           const subPath = currentPath + '/' + dir.name
           const folderId = `local-folder-${subPath}`
+          console.log(`[scanDirectory] Adding folder: ${dir.name}, id=${folderId}, parentId=${currentParentId}`)
           folders.push({
             id: folderId,
             name: dir.name,
@@ -627,7 +647,8 @@ export default function NotesPage() {
       }
     }
 
-    await scan(dirPath, parentId)
+    await scan(dirPath, parentId || 'local-root')
+    console.log(`[scanDirectory] Result: ${folders.length} folders, ${notes.length} notes`)
     return { folders, notes }
   }, [])
 
@@ -645,6 +666,9 @@ export default function NotesPage() {
         // Recursively scan the selected directory
         const result = await scanDirectory(selected, null, selected)
         
+        console.log(`[handleSelectLocalFolder] Scan result: ${result.folders.length} folders, ${result.notes.length} notes`)
+        console.log(`[handleSelectLocalFolder] Folders:`, result.folders.map(f => ({ id: f.id, name: f.name, parentId: f.parentId })))
+        
         // Create a root folder entry for the selected directory
         const rootFolderName = selected.split('/').pop() || selected.split('\\').pop() || selected
         const rootFolder: import('@/types').NoteFolder = {
@@ -653,20 +677,23 @@ export default function NotesPage() {
           parentId: null,
           path: selected,
           expanded: true,
-          children: result.folders.filter(f => f.parentId === null),
+          children: [],
         }
         
         // Build the children references for nested folders
         const buildChildren = (folder: import('@/types').NoteFolder, allFolders: import('@/types').NoteFolder[]) => {
-          folder.children = allFolders
-            .filter(f => f.parentId === folder.id)
-            .map(f => {
-              const child = { ...f }
-              buildChildren(child, allFolders)
-              return child
-            })
+          const children = allFolders.filter(f => f.parentId === folder.id)
+          console.log(`[buildChildren] Folder ${folder.id} (${folder.name}) has ${children.length} children`)
+          folder.children = children.map(f => {
+            const child = { ...f }
+            buildChildren(child, allFolders)
+            return child
+          })
         }
         buildChildren(rootFolder, result.folders)
+        
+        console.log(`[handleSelectLocalFolder] Root folder children count: ${rootFolder.children?.length || 0}`)
+        console.log(`[handleSelectLocalFolder] Final localFolders:`, [rootFolder])
         
         setLocalFolders([rootFolder])
         setLocalNotes(result.notes)
