@@ -137,7 +137,9 @@ export default function NoteEditor({ note }: NoteEditorProps) {
 
   useEffect(() => {
     if (editor && note.content !== editor.getHTML()) {
+      console.log(`[NoteEditor] Syncing content for note ${note.id}, content length: ${note.content?.length || 0}, first 100 chars:`, note.content?.substring(0, 100))
       editor.commands.setContent(note.content)
+      console.log(`[NoteEditor] Content set successfully`)
     }
   }, [note.id, note.content])
 

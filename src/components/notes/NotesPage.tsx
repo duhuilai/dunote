@@ -59,12 +59,13 @@ function getTemplateContent(typeKey: string, title: string): string {
   }
 }
 
-/* ─── Note Item (inside folder) ─── */
-function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect }: {
-  note: any; isActive: boolean; onSelect: () => void; onContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void
+/* ── Note Item (inside folder) ─── */
+function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect, level = 0 }: {
+  note: any; isActive: boolean; onSelect: () => void; onContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void; level?: number
 }) {
   const noteType = getNoteType(note.noteType)
   const TypeIcon = noteType.icon
+  const noteIndent = 28 + level * 20
   return (
     <button
       onClick={() => {
@@ -78,8 +79,8 @@ function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect }: {
       style={{
         width: '100%',
         textAlign: 'left',
-        padding: '8px 12px',
-        paddingLeft: '38px',
+        padding: '7px 12px',
+        paddingLeft: `${noteIndent}px`,
         border: 'none',
         borderLeft: `3px solid ${isActive ? C.primary : 'transparent'}`,
         cursor: 'pointer',
@@ -88,21 +89,21 @@ function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect }: {
         display: 'block',
         transition: 'background 0.15s, border-color 0.15s',
       }}
-      onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = '#F8FAFC' }}
+      onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = '#F1F5F9' }}
       onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-        <TypeIcon size={12} style={{ color: isActive ? C.primary : noteType.color, flexShrink: 0 }} />
+        <TypeIcon size={13} style={{ color: isActive ? C.primary : '#64748B', flexShrink: 0 }} />
         <span style={{
-          fontSize: '12px', fontWeight: 500, flex: 1,
+          fontSize: '12.5px', fontWeight: 400, flex: 1,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          color: isActive ? C.primary : C.text,
+          color: isActive ? C.primary : '#475569',
         }}>
           {note.title}
         </span>
         <span style={{
-          fontSize: '9px', fontWeight: 500, color: noteType.color,
-          background: `${noteType.color}18`, borderRadius: '3px', padding: '1px 5px',
+          fontSize: '9px', fontWeight: 500, color: '#94A3B8',
+          background: '#F1F5F9', borderRadius: '3px', padding: '1px 5px',
           whiteSpace: 'nowrap', flexShrink: 0,
         }}>
           {noteType.label}
@@ -185,8 +186,8 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, l
                 width: '100%',
                 display: 'flex',
                 alignItems: 'center',
-                padding: '4px 12px',
-                paddingLeft: `${12 + level * 16}px`,
+                padding: '3px 12px',
+                paddingLeft: `${10 + level * 20}px`,
                 gap: '2px',
               }}
             >
@@ -228,26 +229,26 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, l
                   fontSize: '13px',
                   cursor: 'pointer',
                   border: 'none',
-                  background: isSelected ? C.primaryLight : 'transparent',
-                  color: isSelected ? C.primary : C.textSecondary,
-                  fontWeight: isSelected ? 500 : 400,
+                  background: isSelected ? 'rgba(217,119,6,0.08)' : 'transparent',
+                  color: isSelected ? '#92400E' : '#78716C',
+                  fontWeight: isSelected ? 600 : 500,
                   textAlign: 'left',
                   fontFamily: 'inherit',
                   transition: 'background 0.15s',
                   borderRadius: '6px',
                   minWidth: 0,
                 }}
-                onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = '#F8FAFC' }}
+                onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = '#FAFAF9' }}
                 onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent' }}
               >
                 <Folder
                   size={14}
-                  style={{ color: isSelected ? C.primary : C.textMuted, flexShrink: 0 }}
+                  style={{ color: isSelected ? '#D97706' : '#A8A29E', flexShrink: 0 }}
                 />
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                   {f.name}
                 </span>
-                <span style={{ fontSize: '10px', color: C.textMuted, flexShrink: 0 }}>
+                <span style={{ fontSize: '10px', color: '#A8A29E', flexShrink: 0 }}>
                   {folderNotes.length}
                 </span>
               </button>
@@ -295,6 +296,7 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, l
                     onSelect={() => setSelectedNoteId(note.id)}
                     onContextMenu={onNoteContextMenu}
                     onNoteSelect={onNoteSelect}
+                    level={level + 1}
                   />
                 ))}
                 {/* Sub-folders */}
@@ -824,25 +826,32 @@ export default function NotesPage() {
   // Handler for selecting a local file note
   const handleSelectLocalNote = useCallback(async (noteId: string, filePath: string) => {
     try {
+      console.log(`[handleSelectLocalNote] Loading: ${filePath}`)
+      
       // Read file content
       const rawContent = await readTextFile(filePath)
+      console.log(`[handleSelectLocalNote] Raw content length: ${rawContent.length}, first 100 chars:`, rawContent.substring(0, 100))
       
       // Convert Markdown to HTML for .md files so Tiptap can render them
       let content = rawContent
       if (filePath.toLowerCase().endsWith('.md')) {
         content = await marked(rawContent)
+        console.log(`[handleSelectLocalNote] Converted to HTML, first 200 chars:`, String(content).substring(0, 200))
       }
       
       // Check if it's a local note (in localNotes state) or a store note
       const isLocalNote = localNotes.some(n => n.id === noteId)
+      console.log(`[handleSelectLocalNote] isLocalNote: ${isLocalNote}, noteId: ${noteId}`)
       if (isLocalNote) {
         // Update in localNotes state
         setLocalNotes(prev => prev.map(n => 
           n.id === noteId ? { ...n, content, updatedAt: new Date().toISOString() } : n
         ))
+        console.log(`[handleSelectLocalNote] Updated localNotes for ${noteId}`)
       } else {
         // Update in store
         updateNote(noteId, { content })
+        console.log(`[handleSelectLocalNote] Updated store note ${noteId}`)
       }
       
       console.log(`Loaded file content: ${filePath} (converted: ${filePath.toLowerCase().endsWith('.md')})`)
