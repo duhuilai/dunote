@@ -101,11 +101,13 @@ jobs:
             artifacts/**/*.dmg
           draft: false
           body: |
-            ## duNote v0.1.1
+            ## duNote v0.1.2
 
             ### 新功能与修复
             - 支持本地 Markdown 文件编辑（自动 MD↔HTML 转换）
             - 编辑后自动保存回源文件
+            - 修复表格保存后丢失的问题
+            - 修复任务列表（checkbox）保存后变成无序列表的问题
             - 文件夹选择跨会话持久化
             - 优化侧边栏文件夹与笔记的视觉区分
 
