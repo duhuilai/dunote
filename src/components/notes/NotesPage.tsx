@@ -3,15 +3,14 @@ import { useAppStore } from '@/store'
 import {
   Search, Plus, ChevronDown, ChevronRight, Folder,
   Clock, Upload, Download, Trash2, Edit3, PanelRightOpen, PanelRightClose,
-  FileText, Users, BookOpen, FileCode, FileType, ChevronRight as ChevronRightIcon, ExternalLink
+  FileText, Users, BookOpen, ExternalLink
 } from 'lucide-react'
 import NoteEditor from './NoteEditor'
 import HistoryModal from './HistoryModal'
-import { exportNote, type ExportFormat } from '@/utils/exportNote'
+import { exportNote } from '@/utils/exportNote'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readDir, readTextFile, writeTextFile, mkdir, exists } from '@tauri-apps/plugin-fs'
 import { homeDir } from '@tauri-apps/api/path'
-import { marked } from 'marked'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -114,8 +113,8 @@ function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect, level
 }
 
 /* ─── Folder Tree (with notes inside) ─── */
-function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, level = 0 }: {
-  folders: any[]; filteredNotes: any[]; onNoteContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void; level?: number
+function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, onCreateSubFolder, level = 0 }: {
+  folders: any[]; filteredNotes: any[]; onNoteContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void; onCreateSubFolder?: (parentPath: string) => void; level?: number
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ f1: true, f2: true, 'local-root': true })
   const selectedFolderId = useAppStore((s) => s.selectedFolderId)
@@ -284,6 +283,40 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, l
               >
                 <ExternalLink size={13} style={{ color: C.textSecondary }} />
               </button>
+
+              {/* Add sub-folder button */}
+              {onCreateSubFolder && f.path && (
+                <button
+                  onClick={() => onCreateSubFolder(f.path)}
+                  title="新建子文件夹"
+                  style={{
+                    width: '24px',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    padding: 0,
+                    opacity: 0.4,
+                    transition: 'all 0.15s',
+                  }}
+                  className="folder-add-btn"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = '#E2E8F0'
+                    e.currentTarget.style.opacity = '1'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent'
+                    e.currentTarget.style.opacity = '0.4'
+                  }}
+                >
+                  <Plus size={13} style={{ color: C.textSecondary }} />
+                </button>
+              )}
             </div>
             {isExpanded && (
               <>
@@ -306,6 +339,7 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, l
                     filteredNotes={filteredNotes} 
                     onNoteContextMenu={onNoteContextMenu} 
                     onNoteSelect={onNoteSelect}
+                    onCreateSubFolder={onCreateSubFolder}
                     level={level + 1} 
                   />
                 ) : null}
@@ -320,10 +354,8 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, l
 
 /* ─── Context Menu ─── */
 function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any; onClose: () => void }) {
-  const [showExportSubmenu, setShowExportSubmenu] = useState(false)
 
-  const handleExport = async (format: ExportFormat) => {
-    setShowExportSubmenu(false)
+  const handleExport = async () => {
     if (!note) return
     const title = note.title || 'untitled'
     let htmlContent = note.content || ''
@@ -331,12 +363,7 @@ function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any;
     // For local files, content may not be loaded yet — read from disk
     if (note._isLocalFile && note.filePath && !htmlContent) {
       try {
-        const raw = await readTextFile(note.filePath as string)
-        if ((note.filePath as string).toLowerCase().endsWith('.md')) {
-          htmlContent = await marked(raw)
-        } else {
-          htmlContent = raw
-        }
+        htmlContent = await readTextFile(note.filePath as string)
       } catch (err) {
         console.error('[Export] Failed to read local file:', err)
         alert('导出失败：无法读取文件内容')
@@ -345,21 +372,14 @@ function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any;
       }
     }
 
-    await exportNote(title, htmlContent, format)
+    await exportNote(title, htmlContent)
     onClose()
   }
 
   const menuItems = [
-    { icon: Download, label: '导出为...', action: () => setShowExportSubmenu(true), hasSubmenu: true, danger: false },
+    { icon: Download, label: '导出为 Markdown', action: handleExport, danger: false },
     { icon: Edit3, label: '重命名', action: () => {}, danger: false },
     { icon: Trash2, label: '删除', action: () => {}, danger: true },
-  ]
-
-  const exportFormats: { format: ExportFormat; label: string; icon: React.ComponentType<{ size?: number }>; ext: string }[] = [
-    { format: 'markdown', label: 'Markdown', icon: FileText, ext: '.md' },
-    { format: 'html', label: 'HTML', icon: FileCode, ext: '.html' },
-    { format: 'word', label: 'Word', icon: FileType, ext: '.doc' },
-    { format: 'pdf', label: 'PDF', icon: FileType, ext: '.pdf' },
   ]
 
   return (
@@ -376,90 +396,37 @@ function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any;
         zIndex: 50,
         minWidth: '180px',
       }}
-      onMouseLeave={() => { setShowExportSubmenu(false); onClose() }}
+      onMouseLeave={onClose}
     >
-      {menuItems.map(({ icon: Icon, label, action, hasSubmenu, danger }) => (
-        <div key={label} style={{ position: 'relative' }}>
-          <button
-            onClick={() => { action(); if (!hasSubmenu) onClose() }}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              padding: '8px 14px',
-              fontSize: '13px',
-              border: 'none',
-              background: 'transparent',
-              cursor: 'pointer',
-              textAlign: 'left',
-              fontFamily: 'inherit',
-              color: danger ? C.danger : C.text,
-              transition: 'background 0.15s',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = danger ? 'rgba(239,68,68,0.07)' : '#F8FAFC'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent'
-            }}
-          >
-            <Icon size={15} />
-            <span style={{ flex: 1 }}>{label}</span>
-            {hasSubmenu && <ChevronRightIcon size={14} style={{ color: C.textMuted }} />}
-          </button>
-
-          {/* Export Submenu */}
-          {hasSubmenu && showExportSubmenu && (
-            <div
-              style={{
-                position: 'absolute',
-                left: '100%',
-                top: 0,
-                marginLeft: '4px',
-                background: C.surface,
-                borderRadius: '10px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
-                border: `1px solid ${C.border}`,
-                padding: '6px',
-                minWidth: '160px',
-                zIndex: 51,
-              }}
-            >
-              {exportFormats.map(({ format, label, icon: Icon, ext }) => (
-                <button
-                  key={format}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => handleExport(format)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '8px 10px',
-                    borderRadius: '7px',
-                    border: 'none',
-                    background: 'transparent',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    fontSize: '13px',
-                    color: C.text,
-                    textAlign: 'left',
-                    transition: 'background 0.15s',
-                    width: '100%',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-                >
-                  <div style={{ flexShrink: 0, color: C.primary }}>
-                    <Icon size={15} />
-                  </div>
-                  <span style={{ flex: 1 }}>{label}</span>
-                  <span style={{ fontSize: '11px', color: C.textMuted }}>{ext}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      {menuItems.map(({ icon: Icon, label, action, danger }) => (
+        <button
+          key={label}
+          onClick={() => { action(); onClose() }}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '8px 14px',
+            fontSize: '13px',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            textAlign: 'left',
+            fontFamily: 'inherit',
+            color: danger ? C.danger : C.text,
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = danger ? 'rgba(239,68,68,0.07)' : '#F8FAFC'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent'
+          }}
+        >
+          <Icon size={15} />
+          <span style={{ flex: 1 }}>{label}</span>
+        </button>
       ))}
     </div>
   )
@@ -556,6 +523,7 @@ export default function NotesPage() {
   // New folder creation state
   const [showNewFolderDialog, setShowNewFolderDialog] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+  const [newSubFolderParentPath, setNewSubFolderParentPath] = useState<string | null>(null)
   const newFolderInputRef             = useRef<HTMLInputElement>(null)
 
   // ─── Persist selected folder across sessions ───
@@ -595,7 +563,9 @@ export default function NotesPage() {
             setLocalFolders([rootFolder])
             setLocalNotes(result.notes)
             setSelectedLocalFolder(config.lastLocalFolder)
-            setSelectedFolderId('local-root')
+            // Restore the selected folder ID (sub-folder or root)
+            setSelectedFolderId(config.lastSelectedFolderId || 'local-root')
+            console.log(`[Persistence] Restored ${result.folders.length} folders, ${result.notes.length} notes`)
           }
         }
       } catch (err) {
@@ -610,15 +580,18 @@ export default function NotesPage() {
       (async () => {
         try {
           const configPath = await getConfigPath()
-          const config = { lastLocalFolder: selectedLocalFolder }
+          const config = { 
+            lastLocalFolder: selectedLocalFolder,
+            lastSelectedFolderId: selectedFolderId,
+          }
           await writeTextFile(configPath, JSON.stringify(config, null, 2))
-          console.log(`[Persistence] Saved folder: ${selectedLocalFolder}`)
+          console.log(`[Persistence] Saved folder: ${selectedLocalFolder}, selectedId: ${selectedFolderId}`)
         } catch (err) {
           console.warn('[Persistence] Failed to save config:', err)
         }
       })()
     }
-  }, [selectedLocalFolder])
+  }, [selectedLocalFolder, selectedFolderId])
 
   // Close type menu when clicking outside
   useEffect(() => {
@@ -665,17 +638,10 @@ export default function NotesPage() {
       if (selectedFolderId && selectedFolderId.startsWith('local-folder-')) {
         targetDir = selectedFolderId.replace('local-folder-', '')
       }
-      const filePath = `${targetDir}/${title}.md`
-
-      // Convert HTML template to Markdown for the new file
-      const TurndownService = (await import('turndown')).default
-      const { gfm } = await import('turndown-plugin-gfm') as any
-      const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
-      td.use(gfm)
-      const mdContent = td.turndown(htmlContent)
+      const filePath = `${targetDir}/${title}.html`
 
       try {
-        await writeTextFile(filePath, mdContent)
+        await writeTextFile(filePath, htmlContent)
         console.log(`[NoteCreate] Created local file: ${filePath}`)
       } catch (err) {
         console.error('[NoteCreate] Failed to create file:', err)
@@ -733,12 +699,12 @@ export default function NotesPage() {
         // Process files
         for (const entry of files) {
           const name = entry.name.toLowerCase()
-          if (name.endsWith('.md') || name.endsWith('.txt') || name.endsWith('.html')) {
+          if (name.endsWith('.html')) {
             const fullPath = currentPath + '/' + entry.name
             const now = new Date().toISOString()
             notes.push({
               id: `local-${fullPath}`,
-              title: entry.name.replace(/\.(md|txt|html)$/i, ''),
+              title: entry.name.replace(/\.html$/i, ''),
               content: '', // Will be loaded on demand when selected
               filePath: fullPath,
               createdAt: now,
@@ -835,9 +801,10 @@ export default function NotesPage() {
     }
   }, [scanDirectory])
 
-  const handleCreateNewFolder = useCallback(() => {
+  const handleCreateNewFolder = useCallback((parentPath?: string) => {
     setShowNewFolderDialog(true)
     setNewFolderName('')
+    setNewSubFolderParentPath(parentPath || null)
     // Focus input after dialog opens
     setTimeout(() => {
       if (newFolderInputRef.current) {
@@ -857,13 +824,16 @@ export default function NotesPage() {
     // Determine where to create the folder
     let targetPath = ''
     try {
-      if (selectedLocalFolder) {
-        // Create subfolder in selected folder
+      if (newSubFolderParentPath) {
+        // Create subfolder inside the specified parent folder
+        targetPath = `${newSubFolderParentPath}/${folderName}`
+        await mkdir(targetPath)
+      } else if (selectedLocalFolder) {
+        // Create subfolder in selected root folder
         targetPath = `${selectedLocalFolder}/${folderName}`
         await mkdir(targetPath)
       } else {
         // Create in current directory or app data directory
-        // For Tauri apps, you might want to use appDataDir from @tauri-apps/api/path
         targetPath = `./${folderName}`
         await mkdir(folderName, { recursive: true })
       }
@@ -871,6 +841,7 @@ export default function NotesPage() {
       console.log(`Created folder: ${targetPath}`)
       setShowNewFolderDialog(false)
       setNewFolderName('')
+      setNewSubFolderParentPath(null)
 
       // Re-scan to refresh the sidebar tree
       if (selectedLocalFolder) {
@@ -896,40 +867,27 @@ export default function NotesPage() {
       console.error('Failed to create folder:', error)
       alert('创建文件夹失败: ' + (error instanceof Error ? error.message : String(error)))
     }
-  }, [newFolderName, selectedLocalFolder, scanDirectory])
+  }, [newFolderName, newSubFolderParentPath, selectedLocalFolder, scanDirectory])
 
   // Handler for selecting a local file note
   const handleSelectLocalNote = useCallback(async (noteId: string, filePath: string) => {
     try {
       console.log(`[handleSelectLocalNote] Loading: ${filePath}`)
       
-      // Read file content
-      const rawContent = await readTextFile(filePath)
-      console.log(`[handleSelectLocalNote] Raw content length: ${rawContent.length}, first 100 chars:`, rawContent.substring(0, 100))
-      
-      // Convert Markdown to HTML for .md files so Tiptap can render them
-      let content = rawContent
-      if (filePath.toLowerCase().endsWith('.md')) {
-        content = await marked(rawContent)
-        console.log(`[handleSelectLocalNote] Converted to HTML, first 200 chars:`, String(content).substring(0, 200))
-      }
+      // Read file content directly (HTML files, no conversion needed)
+      const content = await readTextFile(filePath)
       
       // Check if it's a local note (in localNotes state) or a store note
       const isLocalNote = localNotes.some(n => n.id === noteId)
-      console.log(`[handleSelectLocalNote] isLocalNote: ${isLocalNote}, noteId: ${noteId}`)
       if (isLocalNote) {
-        // Update in localNotes state
         setLocalNotes(prev => prev.map(n => 
           n.id === noteId ? { ...n, content, updatedAt: new Date().toISOString() } : n
         ))
-        console.log(`[handleSelectLocalNote] Updated localNotes for ${noteId}`)
       } else {
-        // Update in store
         updateNote(noteId, { content })
-        console.log(`[handleSelectLocalNote] Updated store note ${noteId}`)
       }
       
-      console.log(`Loaded file content: ${filePath} (converted: ${filePath.toLowerCase().endsWith('.md')})`)
+      console.log(`Loaded file content: ${filePath} (length: ${content.length})`)
     } catch (error) {
       console.error('Failed to read file:', error)
       alert('读取文件失败: ' + (error instanceof Error ? error.message : String(error)))
@@ -1029,7 +987,7 @@ export default function NotesPage() {
 
           {/* New Folder Button */}
           <button
-            onClick={handleCreateNewFolder}
+            onClick={() => handleCreateNewFolder()}
             title="新建文件夹"
             style={{
               width: '40px',
@@ -1214,6 +1172,7 @@ export default function NotesPage() {
             filteredNotes={filteredNotes}
             onNoteContextMenu={handleContextMenu}
             onNoteSelect={handleSelectLocalNote}
+            onCreateSubFolder={selectedLocalFolder ? handleCreateNewFolder : undefined}
           />
 
         </div>
@@ -1459,9 +1418,11 @@ export default function NotesPage() {
               color: C.textSecondary,
               lineHeight: 1.5,
             }}>
-              {selectedLocalFolder 
-                ? `将在 "${selectedLocalFolder}" 中创建子文件夹`
-                : '将在应用目录下创建新文件夹'}
+              {newSubFolderParentPath 
+                ? `将在 "${newSubFolderParentPath.split('/').pop() || newSubFolderParentPath.split('\\').pop()}" 中创建子文件夹`
+                : selectedLocalFolder 
+                  ? `将在 "${selectedLocalFolder.split('/').pop() || selectedLocalFolder.split('\\').pop()}" 中创建子文件夹`
+                  : '将在应用目录下创建新文件夹'}
             </p>
 
             <input

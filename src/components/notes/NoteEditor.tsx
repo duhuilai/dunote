@@ -23,17 +23,15 @@ import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, Quote, Code, CodeSquare,
   Link2, Image as ImageIcon, Highlighter, Palette, ChevronDown,
-  Undo, Redo, Minus, Download, FileText, FileCode, FileType, Clock,
+  Undo, Redo, Minus, Download, Clock,
   AlignLeft, AlignCenter, AlignRight, Plus, Trash2, Table as TableIcon, X,
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight
 } from 'lucide-react'
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { exportNote, type ExportFormat } from '@/utils/exportNote'
+import { exportNote } from '@/utils/exportNote'
 import { syncHistoryToRemote, restoreHistoryFromRemote } from '@/utils/sync'
 import { useAppStore } from '@/store'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
-import TurndownService from 'turndown'
-import { gfm } from 'turndown-plugin-gfm'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -58,8 +56,6 @@ interface NoteEditorProps {
 
 export default function NoteEditor({ note }: NoteEditorProps) {
   const { updateNote, addHistoryEntry, setShowHistory, settings } = useAppStore()
-  const [showExportMenu, setShowExportMenu] = useState(false)
-  const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const baselineContentRef = useRef<string>(note.content || '')
 
@@ -108,18 +104,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
           if ((note as any)._isLocalFile) {
             const filePath = (note as any).filePath as string
             try {
-              // Convert HTML back to Markdown for .md files
-              let fileContent = content
-              if (filePath.toLowerCase().endsWith('.md')) {
-                const turndown = new TurndownService({
-                  headingStyle: 'atx',
-                  codeBlockStyle: 'fenced',
-                  bulletListMarker: '-',
-                })
-                turndown.use(gfm)
-                fileContent = turndown.turndown(content)
-              }
-              await writeTextFile(filePath, fileContent)
+              await writeTextFile(filePath, content)
               console.log(`[Tauri] Successfully wrote to file: ${filePath}`)
             } catch (error) {
               console.error(`[Tauri] Failed to write to file: ${filePath}`, error)
@@ -153,11 +138,10 @@ export default function NoteEditor({ note }: NoteEditorProps) {
 
   if (!editor) return null
 
-  const handleExport = async (format: ExportFormat) => {
-    setShowExportMenu(false)
+  const handleExport = async () => {
     const title = note.title || 'untitled'
     const htmlContent = editor.getHTML()
-    await exportNote(title, htmlContent, format)
+    await exportNote(title, htmlContent)
   }
 
   // Manual history creation
@@ -210,21 +194,6 @@ export default function NoteEditor({ note }: NoteEditorProps) {
     // Open history modal (works for both local and remote modes)
     setShowHistory(true)
   }
-
-  // Close export menu when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
-        setShowExportMenu(false)
-      }
-    }
-    if (showExportMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showExportMenu])
 
   // Color picker functionality
   const [showColorPicker, setShowColorPicker] = useState(false)
@@ -903,70 +872,12 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         <Divider />
 
         {/* Export Button */}
-        <div style={{ position: 'relative' }} ref={exportMenuRef}>
-          <ToolBtn
-            onClick={() => setShowExportMenu((v) => !v)}
-            title="导出笔记"
-          >
-            <Download size={16} />
-          </ToolBtn>
-
-          {showExportMenu && (
-            <div
-              style={{
-                position: 'absolute',
-                top: '100%',
-                right: 0,
-                marginTop: '4px',
-                background: C.surface,
-                borderRadius: '10px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
-                border: `1px solid ${C.border}`,
-                padding: '6px',
-                zIndex: 50,
-                minWidth: '160px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '2px',
-              }}
-            >
-              {[
-                { format: 'markdown' as ExportFormat, label: 'Markdown', icon: FileText, ext: '.md' },
-                { format: 'html' as ExportFormat, label: 'HTML', icon: FileCode, ext: '.html' },
-                { format: 'word' as ExportFormat, label: 'Word', icon: FileType, ext: '.doc' },
-                { format: 'pdf' as ExportFormat, label: 'PDF', icon: FileType, ext: '.pdf' },
-              ].map(({ format, label, icon: Icon, ext }) => (
-                <button
-                  key={format}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => handleExport(format)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '8px 10px',
-                    borderRadius: '7px',
-                    border: 'none',
-                    background: 'transparent',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    fontSize: '13px',
-                    color: C.text,
-                    textAlign: 'left',
-                    transition: 'background 0.15s',
-                    width: '100%',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-                >
-                  <Icon size={15} style={{ color: C.primary, flexShrink: 0 }} />
-                  <span style={{ flex: 1 }}>{label}</span>
-                  <span style={{ fontSize: '11px', color: C.textMuted }}>{ext}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <ToolBtn
+          onClick={handleExport}
+          title="导出为 Markdown"
+        >
+          <Download size={16} />
+        </ToolBtn>
       </div>
 
       {/* ─── Editor Content ─── */}
