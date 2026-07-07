@@ -33,6 +33,7 @@ import { syncHistoryToRemote, restoreHistoryFromRemote } from '@/utils/sync'
 import { useAppStore } from '@/store'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import TurndownService from 'turndown'
+import { gfm } from 'turndown-plugin-gfm'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -115,6 +116,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
                   codeBlockStyle: 'fenced',
                   bulletListMarker: '-',
                 })
+                turndown.use(gfm)
                 fileContent = turndown.turndown(content)
               }
               await writeTextFile(filePath, fileContent)
