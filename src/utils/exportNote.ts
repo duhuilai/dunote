@@ -1,23 +1,30 @@
 import TurndownService from 'turndown'
-import { tables, strikethrough, taskListItems } from 'turndown-plugin-gfm'
-import { saveAs } from 'file-saver'
+import { gfm } from 'turndown-plugin-gfm'
 import html2pdf from 'html2pdf.js'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs'
 
 /**
- * Export note content to Markdown format
+ * Format-specific file filters for the Tauri save dialog
  */
-export function exportToMarkdown(title: string, htmlContent: string): void {
+const FORMAT_FILTERS: Record<ExportFormat, { name: string; extensions: string[] }> = {
+  markdown: { name: 'Markdown', extensions: ['md'] },
+  html:     { name: 'HTML',     extensions: ['html', 'htm'] },
+  word:     { name: 'Word',     extensions: ['doc'] },
+  pdf:      { name: 'PDF',      extensions: ['pdf'] },
+}
+
+/**
+ * Convert HTML content to Markdown string
+ */
+function htmlToMarkdown(title: string, htmlContent: string): string {
   const turndownService = new TurndownService({
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
     bulletListMarker: '-',
     emDelimiter: '*',
   })
-
-  // Add GFM plugins for tables, strikethrough, and task lists
-  turndownService.use(tables)
-  turndownService.use(strikethrough)
-  turndownService.use(taskListItems)
+  turndownService.use(gfm)
 
   // Custom rule for task list items
   turndownService.addRule('taskListItem', {
@@ -33,16 +40,14 @@ export function exportToMarkdown(title: string, htmlContent: string): void {
   })
 
   const markdown = turndownService.turndown(htmlContent)
-  const fullContent = `# ${title}\n\n${markdown}`
-  const blob = new Blob([fullContent], { type: 'text/markdown;charset=utf-8' })
-  saveAs(blob, `${title}.md`)
+  return `# ${title}\n\n${markdown}`
 }
 
 /**
- * Export note content to HTML format
+ * Build a full styled HTML document
  */
-export function exportToHTML(title: string, htmlContent: string): void {
-  const fullHTML = `<!DOCTYPE html>
+function buildHtmlDocument(title: string, htmlContent: string): string {
+  return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -131,17 +136,13 @@ export function exportToHTML(title: string, htmlContent: string): void {
   ${htmlContent}
 </body>
 </html>`
-
-  const blob = new Blob([fullHTML], { type: 'text/html;charset=utf-8' })
-  saveAs(blob, `${title}.html`)
 }
 
 /**
- * Export note content to Word (DOCX) format
- * Uses Word-compatible HTML format saved as .doc
+ * Build a Word-compatible HTML document (.doc)
  */
-export function exportToWord(title: string, htmlContent: string): void {
-  const wordHTML = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+function buildWordDocument(title: string, htmlContent: string): string {
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
 xmlns:w="urn:schemas-microsoft-com:office:word"
 xmlns="http://www.w3.org/TR/REC-html40">
 <head>
@@ -223,18 +224,12 @@ xmlns="http://www.w3.org/TR/REC-html40">
   ${htmlContent}
 </body>
 </html>`
-
-  const blob = new Blob([wordHTML], {
-    type: 'application/msword;charset=utf-8',
-  })
-  saveAs(blob, `${title}.doc`)
 }
 
 /**
- * Export note content to PDF format
+ * Generate PDF as Uint8Array from HTML content
  */
-export async function exportToPDF(title: string, htmlContent: string): Promise<void> {
-  // Create a temporary container for rendering
+async function generatePdfBytes(title: string, htmlContent: string): Promise<Uint8Array> {
   const container = document.createElement('div')
   container.style.position = 'fixed'
   container.style.left = '-9999px'
@@ -250,7 +245,6 @@ export async function exportToPDF(title: string, htmlContent: string): Promise<v
     <div style="font-size: 14px;">${htmlContent}</div>
   `
 
-  // Apply styles to the content
   const style = document.createElement('style')
   style.textContent = `
     h1, h2, h3, h4, h5, h6 { margin-top: 1em; margin-bottom: 0.5em; font-weight: 600; }
@@ -270,7 +264,6 @@ export async function exportToPDF(title: string, htmlContent: string): Promise<v
     hr { border: none; border-top: 1px solid #E2E8F0; margin: 1.5em 0; }
   `
   container.insertBefore(style, container.firstChild)
-
   document.body.appendChild(container)
 
   try {
@@ -283,10 +276,11 @@ export async function exportToPDF(title: string, htmlContent: string): Promise<v
       pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
     }
 
-    await html2pdf()
-      .set(opt)
-      .from(container)
-      .save()
+    // Use outputPdf('arraybuffer') to get raw PDF bytes
+    const worker = html2pdf().set(opt).from(container)
+    const pdfBlob: Blob = await worker.outputPdf('blob')
+    const arrayBuffer = await pdfBlob.arrayBuffer()
+    return new Uint8Array(arrayBuffer)
   } finally {
     document.body.removeChild(container)
   }
@@ -298,27 +292,47 @@ export async function exportToPDF(title: string, htmlContent: string): Promise<v
 export type ExportFormat = 'markdown' | 'html' | 'word' | 'pdf'
 
 /**
- * Main export function that routes to the appropriate exporter
+ * Main export function: opens a native save dialog and writes the file via Tauri
  */
 export async function exportNote(
   title: string,
   htmlContent: string,
   format: ExportFormat
 ): Promise<void> {
+  const filter = FORMAT_FILTERS[format]
+  if (!filter) throw new Error(`Unsupported export format: ${format}`)
+
+  // Open native save dialog
+  const filePath = await save({
+    title: '导出笔记',
+    filters: [filter],
+    defaultPath: `${title}.${filter.extensions[0]}`,
+  })
+
+  if (!filePath) return // User cancelled
+
   switch (format) {
-    case 'markdown':
-      exportToMarkdown(title, htmlContent)
+    case 'markdown': {
+      const mdContent = htmlToMarkdown(title, htmlContent)
+      await writeTextFile(filePath, mdContent)
       break
-    case 'html':
-      exportToHTML(title, htmlContent)
+    }
+    case 'html': {
+      const fullHTML = buildHtmlDocument(title, htmlContent)
+      await writeTextFile(filePath, fullHTML)
       break
-    case 'word':
-      exportToWord(title, htmlContent)
+    }
+    case 'word': {
+      const wordDoc = buildWordDocument(title, htmlContent)
+      await writeTextFile(filePath, wordDoc)
       break
-    case 'pdf':
-      await exportToPDF(title, htmlContent)
+    }
+    case 'pdf': {
+      const pdfBytes = await generatePdfBytes(title, htmlContent)
+      await writeFile(filePath, pdfBytes)
       break
-    default:
-      throw new Error(`Unsupported export format: ${format}`)
+    }
   }
+
+  console.log(`[Export] Successfully exported to: ${filePath}`)
 }

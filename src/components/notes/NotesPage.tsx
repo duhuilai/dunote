@@ -326,7 +326,25 @@ function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any;
     setShowExportSubmenu(false)
     if (!note) return
     const title = note.title || 'untitled'
-    const htmlContent = note.content || ''
+    let htmlContent = note.content || ''
+
+    // For local files, content may not be loaded yet — read from disk
+    if (note._isLocalFile && note.filePath && !htmlContent) {
+      try {
+        const raw = await readTextFile(note.filePath as string)
+        if ((note.filePath as string).toLowerCase().endsWith('.md')) {
+          htmlContent = await marked(raw)
+        } else {
+          htmlContent = raw
+        }
+      } catch (err) {
+        console.error('[Export] Failed to read local file:', err)
+        alert('导出失败：无法读取文件内容')
+        onClose()
+        return
+      }
+    }
+
     await exportNote(title, htmlContent, format)
     onClose()
   }
