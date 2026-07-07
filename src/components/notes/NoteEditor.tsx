@@ -69,7 +69,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       Underline,
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Placeholder.configure({ placeholder: '开始输入内容...' }),
+      Placeholder.configure({ placeholder: '输入/显示菜单或直接录入' }),
       Image,
       Link.configure({ openOnClick: false }),
       TaskList,

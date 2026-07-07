@@ -34,7 +34,8 @@ function htmlToMarkdown(title: string, htmlContent: string): string {
     replacement: (content: string, node: any) => {
       const checkbox = node.querySelector('input[type="checkbox"]')
       const checked = checkbox && checkbox.checked ? 'x' : ' '
-      content = content.replace(/^\s*\[[\sx]?\]\s*/, '')
+      // Strip newlines from block-level wrappers (label, div) and trim
+      content = content.replace(/\n+/g, ' ').replace(/^\s+|\s+$/g, '').replace(/^\[[\sx]?\]\s*/, '')
       return `- [${checked}] ${content}\n`
     },
   })

@@ -8,9 +8,10 @@ import {
 import NoteEditor from './NoteEditor'
 import HistoryModal from './HistoryModal'
 import { exportNote, type ExportFormat } from '@/utils/exportNote'
-import { open } from '@tauri-apps/plugin-dialog'
-import { readDir, readTextFile, writeTextFile, mkdir, exists } from '@tauri-apps/plugin-fs'
+import { open, message } from '@tauri-apps/plugin-dialog'
+import { readDir, readTextFile, writeTextFile, mkdir, exists, remove } from '@tauri-apps/plugin-fs'
 import { homeDir } from '@tauri-apps/api/path'
+import { marked } from 'marked'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -113,8 +114,8 @@ function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect, level
 }
 
 /* ─── Folder Tree (with notes inside) ─── */
-function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, onCreateSubFolder, level = 0 }: {
-  folders: any[]; filteredNotes: any[]; onNoteContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void; onCreateSubFolder?: (parentPath: string) => void; level?: number
+function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, onCreateSubFolder, onDeleteFolder, onFolderContextMenu, level = 0 }: {
+  folders: any[]; filteredNotes: any[]; onNoteContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void; onCreateSubFolder?: (parentPath: string) => void; onDeleteFolder?: (folder: any) => void; onFolderContextMenu?: (e: React.MouseEvent, folder: any) => void; level?: number
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ f1: true, f2: true, 'local-root': true })
   const selectedFolderId = useAppStore((s) => s.selectedFolderId)
@@ -181,6 +182,12 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
           <div key={f.id}>
             <div
               className="folder-row"
+              onContextMenu={(e) => {
+                if (onFolderContextMenu) {
+                  e.preventDefault()
+                  onFolderContextMenu(e, f)
+                }
+              }}
               style={{
                 width: '100%',
                 display: 'flex',
@@ -317,6 +324,40 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
                   <Plus size={13} style={{ color: C.textSecondary }} />
                 </button>
               )}
+
+              {/* Delete folder button */}
+              {onDeleteFolder && f.path && f.id !== 'local-root' && (
+                <button
+                  onClick={() => onDeleteFolder(f)}
+                  title="删除文件夹"
+                  style={{
+                    width: '24px',
+                    height: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderRadius: '4px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    padding: 0,
+                    opacity: 0.4,
+                    transition: 'all 0.15s',
+                  }}
+                  className="folder-del-btn"
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'rgba(239,68,68,0.1)'
+                    e.currentTarget.style.opacity = '1'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent'
+                    e.currentTarget.style.opacity = '0.4'
+                  }}
+                >
+                  <Trash2 size={13} style={{ color: C.danger }} />
+                </button>
+              )}
             </div>
             {isExpanded && (
               <>
@@ -340,6 +381,8 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
                     onNoteContextMenu={onNoteContextMenu} 
                     onNoteSelect={onNoteSelect}
                     onCreateSubFolder={onCreateSubFolder}
+                    onDeleteFolder={onDeleteFolder}
+                    onFolderContextMenu={onFolderContextMenu}
                     level={level + 1} 
                   />
                 ) : null}
@@ -353,7 +396,7 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
 }
 
 /* ─── Context Menu ─── */
-function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any; onClose: () => void }) {
+function ContextMenu({ x, y, note, onClose, onDelete }: { x: number; y: number; note: any; onClose: () => void; onDelete: (note: any) => void }) {
   const [showExportSubmenu, setShowExportSubmenu] = useState(false)
 
   const handleExport = async (format: ExportFormat) => {
@@ -381,7 +424,7 @@ function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any;
   const menuItems = [
     { icon: Download, label: '导出为...', action: () => setShowExportSubmenu(true), hasSubmenu: true, danger: false },
     { icon: Edit3, label: '重命名', action: () => {}, danger: false },
-    { icon: Trash2, label: '删除', action: () => {}, danger: true },
+    { icon: Trash2, label: '删除', action: () => onDelete(note), danger: true },
   ]
 
   const exportFormats: { format: ExportFormat; label: string; icon: React.ComponentType<{ size?: number }>; ext: string }[] = [
@@ -494,6 +537,51 @@ function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any;
   )
 }
 
+/* ─── Folder Context Menu ─── */
+function FolderContextMenu({ x, y, folder, onClose, onImport }: { x: number; y: number; folder: any; onClose: () => void; onImport: (folder: any) => void }) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        left: x,
+        top: y,
+        background: C.surface,
+        borderRadius: '12px',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+        border: `1px solid ${C.border}`,
+        padding: '6px 0',
+        zIndex: 50,
+        minWidth: '160px',
+      }}
+      onMouseLeave={onClose}
+    >
+      <button
+        onClick={() => { onImport(folder); onClose() }}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '8px 14px',
+          fontSize: '13px',
+          border: 'none',
+          background: 'transparent',
+          cursor: 'pointer',
+          textAlign: 'left',
+          fontFamily: 'inherit',
+          color: C.text,
+          transition: 'background 0.15s',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+      >
+        <Upload size={15} />
+        <span style={{ flex: 1 }}>导入 Markdown 文件</span>
+      </button>
+    </div>
+  )
+}
+
 /* ─── Outline extraction ─── */
 function OutlineContent({ html }: { html: string }) {
   const headings: { level: number; text: string }[] = []
@@ -568,6 +656,7 @@ export default function NotesPage() {
   const addNote        = useAppStore((s) => s.addNote)
 
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; note: any } | null>(null)
+  const [folderCtxMenu, setFolderCtxMenu] = useState<{ x: number; y: number; folder: any } | null>(null)
   const [showTypeMenu, setShowTypeMenu] = useState(false)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [createNoteTitle, setCreateNoteTitle] = useState('')
@@ -956,6 +1045,136 @@ export default function NotesPage() {
     }
   }, [updateNote, localNotes])
 
+  // ─── Delete handlers ───
+  const handleDeleteNote = useCallback(async (note: any) => {
+    const name = note.title || '未命名笔记'
+    if (!confirm(`确定要删除「${name}」吗？\n此操作不可撤销。`)) return
+
+    if (note._isLocalFile && note.filePath) {
+      // Delete local file from disk
+      try {
+        await remove(note.filePath as string)
+        console.log(`[Delete] Removed file: ${note.filePath}`)
+      } catch (err) {
+        console.error('[Delete] Failed to remove file:', err)
+        alert('删除失败: ' + (err instanceof Error ? err.message : String(err)))
+        return
+      }
+      // Remove from localNotes state
+      setLocalNotes(prev => prev.filter(n => n.id !== note.id))
+      if (selectedNoteId === note.id) setSelectedNoteId(null)
+    } else {
+      // Delete from store
+      deleteNote(note.id)
+    }
+  }, [deleteNote, selectedNoteId, setSelectedNoteId])
+
+  const handleDeleteFolder = useCallback(async (folder: any) => {
+    const name = folder.name || '未命名文件夹'
+    if (!confirm(`确定要删除文件夹「${name}」及其所有内容吗？\n此操作不可撤销。`)) return
+
+    if (!folder.path) return
+
+    try {
+      await remove(folder.path as string, { recursive: true })
+      console.log(`[Delete] Removed folder: ${folder.path}`)
+    } catch (err) {
+      console.error('[Delete] Failed to remove folder:', err)
+      alert('删除文件夹失败: ' + (err instanceof Error ? err.message : String(err)))
+      return
+    }
+
+    // Re-scan to refresh the tree
+    if (selectedLocalFolder) {
+      const result = await scanDirectory(selectedLocalFolder, null, selectedLocalFolder)
+      const rootFolderName = selectedLocalFolder.split('/').pop() || selectedLocalFolder.split('\\').pop() || selectedLocalFolder
+      const rootFolder: import('@/types').NoteFolder = {
+        id: 'local-root', name: rootFolderName, parentId: null,
+        path: selectedLocalFolder, expanded: true, children: [],
+      }
+      const buildChildren = (f: import('@/types').NoteFolder, allFolders: import('@/types').NoteFolder[]) => {
+        const children = allFolders.filter(cf => cf.parentId === f.id)
+        f.children = children.map(c => { const child = { ...c }; buildChildren(child, allFolders); return child })
+      }
+      buildChildren(rootFolder, result.folders)
+      setLocalFolders([rootFolder])
+      setLocalNotes(result.notes)
+      // If the deleted folder was selected, fall back to root
+      if (selectedFolderId === folder.id) {
+        setSelectedFolderId('local-root')
+      }
+    }
+  }, [selectedLocalFolder, selectedFolderId, setSelectedFolderId, scanDirectory])
+
+  // ─── Folder context menu ───
+  const handleFolderContextMenu = useCallback((e: React.MouseEvent, folder: any) => {
+    e.preventDefault()
+    setFolderCtxMenu({ x: e.clientX, y: e.clientY, folder })
+  }, [])
+
+  // ─── Import Markdown files ───
+  const handleImportMarkdown = useCallback(async (folder: any) => {
+    if (!folder.path) return
+
+    try {
+      const selected = await open({
+        multiple: true,
+        title: '选择 Markdown 文件',
+        filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+      })
+
+      if (!selected) return
+      const files = Array.isArray(selected) ? selected : [selected]
+      if (files.length === 0) return
+
+      let imported = 0
+      let errors = 0
+
+      for (const filePath of files) {
+        try {
+          const mdContent = await readTextFile(filePath as string)
+          const htmlBody = await marked(mdContent)
+          const fileName = (filePath as string).split('/').pop()!.split('\\').pop()!.replace(/\.(md|markdown)$/i, '')
+          const htmlContent = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${fileName}</title></head><body>${htmlBody}</body></html>`
+          const targetPath = `${folder.path}/${fileName}.html`
+
+          await writeTextFile(targetPath, htmlContent)
+          imported++
+          console.log(`[Import] Converted: ${filePath} → ${targetPath}`)
+        } catch (err) {
+          console.error(`[Import] Failed to import ${filePath}:`, err)
+          errors++
+        }
+      }
+
+      // Re-scan to refresh the tree
+      if (selectedLocalFolder) {
+        const result = await scanDirectory(selectedLocalFolder, null, selectedLocalFolder)
+        const rootFolderName = selectedLocalFolder.split('/').pop() || selectedLocalFolder.split('\\').pop() || selectedLocalFolder
+        const rootFolder: import('@/types').NoteFolder = {
+          id: 'local-root', name: rootFolderName, parentId: null,
+          path: selectedLocalFolder, expanded: true, children: [],
+        }
+        const buildChildren = (f: import('@/types').NoteFolder, allFolders: import('@/types').NoteFolder[]) => {
+          const children = allFolders.filter(cf => cf.parentId === f.id)
+          f.children = children.map(c => { const child = { ...c }; buildChildren(child, allFolders); return child })
+        }
+        buildChildren(rootFolder, result.folders)
+        setLocalFolders([rootFolder])
+        setLocalNotes(result.notes)
+      }
+
+      if (errors > 0) {
+        await message(`导入完成：${imported} 个成功，${errors} 个失败`, { title: '导入结果', kind: 'warning' })
+      } else {
+        await message(`成功导入 ${imported} 个 Markdown 文件`, { title: '导入完成', kind: 'info' })
+      }
+    } catch (err) {
+      console.error('[Import] Failed:', err)
+      await message('导入失败: ' + (err instanceof Error ? err.message : String(err)), { title: '错误', kind: 'error' })
+    }
+  }, [selectedLocalFolder, scanDirectory])
+
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 B'
     const k = 1024
@@ -1235,6 +1454,8 @@ export default function NotesPage() {
             onNoteContextMenu={handleContextMenu}
             onNoteSelect={handleSelectLocalNote}
             onCreateSubFolder={selectedLocalFolder ? handleCreateNewFolder : undefined}
+            onDeleteFolder={selectedLocalFolder ? handleDeleteFolder : undefined}
+            onFolderContextMenu={selectedLocalFolder ? handleFolderContextMenu : undefined}
           />
 
         </div>
@@ -1351,7 +1572,12 @@ export default function NotesPage() {
 
       {/* Context Menu */}
       {ctxMenu && (
-        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} note={ctxMenu.note} onClose={() => setCtxMenu(null)} />
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} note={ctxMenu.note} onClose={() => setCtxMenu(null)} onDelete={handleDeleteNote} />
+      )}
+
+      {/* Folder Context Menu */}
+      {folderCtxMenu && (
+        <FolderContextMenu x={folderCtxMenu.x} y={folderCtxMenu.y} folder={folderCtxMenu.folder} onClose={() => setFolderCtxMenu(null)} onImport={handleImportMarkdown} />
       )}
 
       {/* ─── Note Creation Dialog ─── */}

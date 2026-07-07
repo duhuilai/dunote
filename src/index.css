@@ -48,7 +48,7 @@ input, select, textarea { font-family: inherit; }
   line-height: 1.7;
   color: var(--color-text);
 }
-.tiptap p.is-editor-empty:first-child::before {
+.tiptap p.is-empty::before {
   content: attr(data-placeholder);
   float: left;
   color: var(--color-text-muted);
