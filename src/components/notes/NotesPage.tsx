@@ -841,48 +841,37 @@ export default function NotesPage() {
           </button>
 
           {/* Open Local Folder Button */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button
-              onClick={handleSelectLocalFolder}
-              title="打开本地文件夹（选择后直接显示文件夹内容）"
-              style={{
-                width: '40px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '8px',
-                borderRadius: '8px',
-                background: selectedLocalFolder ? C.accent : '#F1F5F9',
-                color: selectedLocalFolder ? '#FFFFFF' : C.textSecondary,
-                fontSize: '13px',
-                fontWeight: 500,
-                border: 'none',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                transition: 'all 0.15s',
-                flexShrink: 0,
-              }}
-              onMouseEnter={(e) => { 
-                if (!selectedLocalFolder) e.currentTarget.style.background = '#E2E8F0'
-                else e.currentTarget.style.background = '#0891B2'
-              }}
-              onMouseLeave={(e) => { 
-                if (!selectedLocalFolder) e.currentTarget.style.background = '#F1F5F9'
-                else e.currentTarget.style.background = C.accent
-              }}
-            >
-              <Folder size={18} />
-            </button>
-            {!selectedLocalFolder && (
-              <span style={{ 
-                fontSize: '11px', 
-                color: C.textMuted,
-                whiteSpace: 'nowrap',
-              }}>
-                打开文件夹
-              </span>
-            )}
-          </div>
+          <button
+            onClick={handleSelectLocalFolder}
+            title="打开本地文件夹"
+            style={{
+              width: '40px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '8px',
+              borderRadius: '8px',
+              background: selectedLocalFolder ? C.accent : '#F1F5F9',
+              color: selectedLocalFolder ? '#FFFFFF' : C.textSecondary,
+              fontSize: '13px',
+              fontWeight: 500,
+              border: 'none',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              transition: 'all 0.15s',
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => { 
+              if (!selectedLocalFolder) e.currentTarget.style.background = '#E2E8F0'
+              else e.currentTarget.style.background = '#0891B2'
+            }}
+            onMouseLeave={(e) => { 
+              if (!selectedLocalFolder) e.currentTarget.style.background = '#F1F5F9'
+              else e.currentTarget.style.background = C.accent
+            }}
+          >
+            <Folder size={18} />
+          </button>
 
           {/* New Folder Button */}
           <button
