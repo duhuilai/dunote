@@ -23,12 +23,12 @@ import {
   Heading1, Heading2, Heading3,
   List, ListOrdered, Quote, Code, CodeSquare,
   Link2, Image as ImageIcon, Highlighter, Palette, ChevronDown,
-  Undo, Redo, Minus, Download, Clock,
+  Undo, Redo, Minus, Download, FileText, FileCode, FileType, Clock,
   AlignLeft, AlignCenter, AlignRight, Plus, Trash2, Table as TableIcon, X,
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight
 } from 'lucide-react'
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { exportNote } from '@/utils/exportNote'
+import { exportNote, type ExportFormat } from '@/utils/exportNote'
 import { syncHistoryToRemote, restoreHistoryFromRemote } from '@/utils/sync'
 import { useAppStore } from '@/store'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
@@ -56,6 +56,8 @@ interface NoteEditorProps {
 
 export default function NoteEditor({ note }: NoteEditorProps) {
   const { updateNote, addHistoryEntry, setShowHistory, settings } = useAppStore()
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const baselineContentRef = useRef<string>(note.content || '')
 
@@ -138,10 +140,11 @@ export default function NoteEditor({ note }: NoteEditorProps) {
 
   if (!editor) return null
 
-  const handleExport = async () => {
+  const handleExport = async (format: ExportFormat) => {
+    setShowExportMenu(false)
     const title = note.title || 'untitled'
     const htmlContent = editor.getHTML()
-    await exportNote(title, htmlContent)
+    await exportNote(title, htmlContent, format)
   }
 
   // Manual history creation
@@ -194,6 +197,21 @@ export default function NoteEditor({ note }: NoteEditorProps) {
     // Open history modal (works for both local and remote modes)
     setShowHistory(true)
   }
+
+  // Close export menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setShowExportMenu(false)
+      }
+    }
+    if (showExportMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showExportMenu])
 
   // Color picker functionality
   const [showColorPicker, setShowColorPicker] = useState(false)
@@ -872,12 +890,63 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         <Divider />
 
         {/* Export Button */}
-        <ToolBtn
-          onClick={handleExport}
-          title="导出为 Markdown"
-        >
-          <Download size={16} />
-        </ToolBtn>
+        <div style={{ position: 'relative' }} ref={exportMenuRef}>
+          <ToolBtn
+            onClick={() => setShowExportMenu((v) => !v)}
+            title="导出笔记"
+          >
+            <Download size={16} />
+          </ToolBtn>
+          {showExportMenu && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: '8px',
+              background: C.surface,
+              borderRadius: '10px',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
+              border: `1px solid ${C.border}`,
+              padding: '6px',
+              zIndex: 40,
+              minWidth: '180px',
+            }}>
+              {[
+                { format: 'markdown' as ExportFormat, label: 'Markdown', icon: FileText, ext: '.md' },
+                { format: 'html' as ExportFormat, label: 'HTML', icon: FileCode, ext: '.html' },
+                { format: 'word' as ExportFormat, label: 'Word', icon: FileType, ext: '.doc' },
+                { format: 'pdf' as ExportFormat, label: 'PDF', icon: FileType, ext: '.pdf' },
+              ].map(({ format, label, icon: Icon, ext }) => (
+                <button
+                  key={format}
+                  onClick={() => handleExport(format)}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '8px 12px',
+                    borderRadius: '7px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    fontSize: '13px',
+                    color: C.text,
+                    textAlign: 'left',
+                    transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                >
+                  <Icon size={15} style={{ color: C.textSecondary }} />
+                  <span style={{ flex: 1 }}>{label}</span>
+                  <span style={{ fontSize: '11px', color: C.textMuted }}>{ext}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ─── Editor Content ─── */}

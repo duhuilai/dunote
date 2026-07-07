@@ -1,13 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useAppStore } from '@/store'
 import {
-  Search, Plus, ChevronDown, ChevronRight, Folder,
+  Search, Plus, ChevronDown, ChevronRight, ChevronRight as ChevronRightIcon, Folder,
   Clock, Upload, Download, Trash2, Edit3, PanelRightOpen, PanelRightClose,
-  FileText, Users, BookOpen, ExternalLink
+  FileText, FileCode, FileType, Users, BookOpen, ExternalLink
 } from 'lucide-react'
 import NoteEditor from './NoteEditor'
 import HistoryModal from './HistoryModal'
-import { exportNote } from '@/utils/exportNote'
+import { exportNote, type ExportFormat } from '@/utils/exportNote'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readDir, readTextFile, writeTextFile, mkdir, exists } from '@tauri-apps/plugin-fs'
 import { homeDir } from '@tauri-apps/api/path'
@@ -354,8 +354,10 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
 
 /* ─── Context Menu ─── */
 function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any; onClose: () => void }) {
+  const [showExportSubmenu, setShowExportSubmenu] = useState(false)
 
-  const handleExport = async () => {
+  const handleExport = async (format: ExportFormat) => {
+    setShowExportSubmenu(false)
     if (!note) return
     const title = note.title || 'untitled'
     let htmlContent = note.content || ''
@@ -372,14 +374,21 @@ function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any;
       }
     }
 
-    await exportNote(title, htmlContent)
+    await exportNote(title, htmlContent, format)
     onClose()
   }
 
   const menuItems = [
-    { icon: Download, label: '导出为 Markdown', action: handleExport, danger: false },
+    { icon: Download, label: '导出为...', action: () => setShowExportSubmenu(true), hasSubmenu: true, danger: false },
     { icon: Edit3, label: '重命名', action: () => {}, danger: false },
     { icon: Trash2, label: '删除', action: () => {}, danger: true },
+  ]
+
+  const exportFormats: { format: ExportFormat; label: string; icon: React.ComponentType<{ size?: number }>; ext: string }[] = [
+    { format: 'markdown', label: 'Markdown', icon: FileText, ext: '.md' },
+    { format: 'html', label: 'HTML', icon: FileCode, ext: '.html' },
+    { format: 'word', label: 'Word', icon: FileType, ext: '.doc' },
+    { format: 'pdf', label: 'PDF', icon: FileType, ext: '.pdf' },
   ]
 
   return (
@@ -396,37 +405,90 @@ function ContextMenu({ x, y, note, onClose }: { x: number; y: number; note: any;
         zIndex: 50,
         minWidth: '180px',
       }}
-      onMouseLeave={onClose}
+      onMouseLeave={() => { setShowExportSubmenu(false); onClose() }}
     >
-      {menuItems.map(({ icon: Icon, label, action, danger }) => (
-        <button
-          key={label}
-          onClick={() => { action(); onClose() }}
-          style={{
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            padding: '8px 14px',
-            fontSize: '13px',
-            border: 'none',
-            background: 'transparent',
-            cursor: 'pointer',
-            textAlign: 'left',
-            fontFamily: 'inherit',
-            color: danger ? C.danger : C.text,
-            transition: 'background 0.15s',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = danger ? 'rgba(239,68,68,0.07)' : '#F8FAFC'
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'transparent'
-          }}
-        >
-          <Icon size={15} />
-          <span style={{ flex: 1 }}>{label}</span>
-        </button>
+      {menuItems.map(({ icon: Icon, label, action, hasSubmenu, danger }) => (
+        <div key={label} style={{ position: 'relative' }}>
+          <button
+            onClick={() => { action(); if (!hasSubmenu) onClose() }}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '8px 14px',
+              fontSize: '13px',
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              textAlign: 'left',
+              fontFamily: 'inherit',
+              color: danger ? C.danger : C.text,
+              transition: 'background 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = danger ? 'rgba(239,68,68,0.07)' : '#F8FAFC'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+            }}
+          >
+            <Icon size={15} />
+            <span style={{ flex: 1 }}>{label}</span>
+            {hasSubmenu && <ChevronRightIcon size={14} style={{ color: C.textMuted }} />}
+          </button>
+
+          {/* Export Submenu */}
+          {hasSubmenu && showExportSubmenu && (
+            <div
+              style={{
+                position: 'absolute',
+                left: '100%',
+                top: 0,
+                marginLeft: '4px',
+                background: C.surface,
+                borderRadius: '10px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
+                border: `1px solid ${C.border}`,
+                padding: '6px',
+                minWidth: '160px',
+                zIndex: 51,
+              }}
+            >
+              {exportFormats.map(({ format, label, icon: Icon, ext }) => (
+                <button
+                  key={format}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => handleExport(format)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 10px',
+                    borderRadius: '7px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    fontSize: '13px',
+                    color: C.text,
+                    textAlign: 'left',
+                    transition: 'background 0.15s',
+                    width: '100%',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                >
+                  <div style={{ flexShrink: 0, color: C.primary }}>
+                    <Icon size={15} />
+                  </div>
+                  <span style={{ flex: 1 }}>{label}</span>
+                  <span style={{ fontSize: '11px', color: C.textMuted }}>{ext}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       ))}
     </div>
   )
