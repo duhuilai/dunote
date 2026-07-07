@@ -60,6 +60,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   const [showExportMenu, setShowExportMenu] = useState(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isSettingContentRef = useRef(false)
 
   const editor = useEditor({
     extensions: [
@@ -91,6 +92,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       },
     },
     onUpdate: ({ editor }) => {
+      // Skip auto-save when content is set programmatically (e.g. loading a file)
+      if (isSettingContentRef.current) return
       // Debounced auto-save (1.5 seconds after last edit)
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
@@ -138,7 +141,10 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   useEffect(() => {
     if (editor && note.content !== editor.getHTML()) {
       console.log(`[NoteEditor] Syncing content for note ${note.id}, content length: ${note.content?.length || 0}, first 100 chars:`, note.content?.substring(0, 100))
+      isSettingContentRef.current = true
       editor.commands.setContent(note.content)
+      // Reset flag after a tick to allow onUpdate to be skipped
+      setTimeout(() => { isSettingContentRef.current = false }, 0)
       console.log(`[NoteEditor] Content set successfully`)
     }
   }, [note.id, note.content])
