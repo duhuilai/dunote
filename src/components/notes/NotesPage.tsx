@@ -634,24 +634,66 @@ export default function NotesPage() {
     setTimeout(() => createInputRef.current?.focus(), 50)
   }
 
-  const confirmCreateNote = () => {
+  const confirmCreateNote = async () => {
     const title = createNoteTitle.trim()
     if (!title) return
     setShowCreateDialog(false)
     const now = new Date().toISOString()
-    const newNote = {
-      id: `note-${Date.now()}`,
-      title,
-      content: getTemplateContent(pendingNoteType, title),
-      folderId: selectedFolderId || 'f1',
-      filePath: '/未分类',
-      tags: [] as string[],
-      createdAt: now,
-      updatedAt: now,
-      noteType: pendingNoteType,
+    const htmlContent = getTemplateContent(pendingNoteType, title)
+
+    if (selectedLocalFolder) {
+      // Determine target directory based on selected folder
+      let targetDir = selectedLocalFolder
+      if (selectedFolderId && selectedFolderId.startsWith('local-folder-')) {
+        targetDir = selectedFolderId.replace('local-folder-', '')
+      }
+      const filePath = `${targetDir}/${title}.md`
+
+      // Convert HTML template to Markdown for the new file
+      const TurndownService = (await import('turndown')).default
+      const { gfm } = await import('turndown-plugin-gfm') as any
+      const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
+      td.use(gfm)
+      const mdContent = td.turndown(htmlContent)
+
+      try {
+        await writeTextFile(filePath, mdContent)
+        console.log(`[NoteCreate] Created local file: ${filePath}`)
+      } catch (err) {
+        console.error('[NoteCreate] Failed to create file:', err)
+        alert('创建文件失败: ' + (err instanceof Error ? err.message : String(err)))
+        return
+      }
+
+      const newNote: any = {
+        id: `local-${filePath}`,
+        title,
+        content: htmlContent,
+        filePath,
+        folderId: selectedFolderId || 'local-root',
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+        noteType: pendingNoteType,
+        _isLocalFile: true,
+      }
+      setLocalNotes(prev => [newNote, ...prev])
+      setSelectedNoteId(newNote.id)
+    } else {
+      const newNote = {
+        id: `note-${Date.now()}`,
+        title,
+        content: htmlContent,
+        folderId: selectedFolderId || 'f1',
+        filePath: '/未分类',
+        tags: [] as string[],
+        createdAt: now,
+        updatedAt: now,
+        noteType: pendingNoteType,
+      }
+      addNote(newNote)
+      setSelectedNoteId(newNote.id)
     }
-    addNote(newNote)
-    setSelectedNoteId(newNote.id)
   }
 
   // Recursively scan a directory to build folder tree and collect note files
