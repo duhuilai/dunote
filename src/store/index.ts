@@ -29,6 +29,15 @@ interface AppState {
   addHistoryEntry: (entry: Omit<NoteHistory, 'id' | 'timestamp'>) => void;
   restoreFromHistory: (historyId: string) => void;
   deleteHistoryEntry: (historyId: string) => void;
+  /** 用远程拉取的历史替换该笔记的远程条目（保留本地条目） */
+  mergeRemoteHistory: (noteId: string, entries: NoteHistory[]) => void;
+  /** 更新某条历史记录的内容（还原远程条目前刷新最新内容） */
+  updateHistoryContent: (historyId: string, content: string) => void;
+
+  /* ─── Toast 通知 ─── */
+  toast: { message: string; type: 'success' | 'error' | 'info' } | null;
+  showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+  hideToast: () => void;
 
   // Personnel
   personnel: Person[];
@@ -168,6 +177,30 @@ export const useAppStore = create<AppState>((set) => ({
   deleteHistoryEntry: (historyId: string) => set((s) => ({
     history: s.history.filter((h) => h.id !== historyId),
   })),
+  mergeRemoteHistory: (noteId, entries) => set((s) => {
+    // 移除该笔记旧的远程条目，替换为刚拉取的远程条目，本地条目原样保留
+    const localOnly = s.history.filter((h) => h.noteId !== noteId || !h.remote)
+    // 远程条目与本地已有的（按 remotePath 去重，避免重复）
+    const existingRemotePaths = new Set(localOnly.map((h) => h.remotePath).filter(Boolean))
+    const freshRemote = entries.filter((e) => !existingRemotePaths.has(e.remotePath))
+    return { history: [...freshRemote, ...localOnly] }
+  }),
+  updateHistoryContent: (historyId, content) => set((s) => ({
+    history: s.history.map((h) => (h.id === historyId ? { ...h, content } : h)),
+  })),
+
+  /* ─── Toast ─── */
+  toast: null,
+  showToast: (message, type = 'info') => {
+    set({ toast: { message, type } })
+    if (typeof window !== 'undefined') {
+      window.clearTimeout((useAppStore as any)._toastTimer)
+      ;(useAppStore as any)._toastTimer = window.setTimeout(() => {
+        set({ toast: null })
+      }, 2600)
+    }
+  },
+  hideToast: () => set({ toast: null }),
 
   // Personnel
   personnel: mockPersonnel,
@@ -194,12 +227,10 @@ export const useAppStore = create<AppState>((set) => ({
     language: 'zh-CN',
     syncConfig: {
       type: 'local',
-      url: '',
-      branch: 'main',
-      username: '',
+      url: 'https://gitee.com/api/v5',
+      repo: '',
+      branch: '',
       token: '',
-      autoSync: false,
-      syncInterval: 30,
     },
     customColors: {
       '标签-重要': '#EF4444',

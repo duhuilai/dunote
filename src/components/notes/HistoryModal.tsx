@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store'
+import { fetchGiteeFileContent } from '@/utils/sync'
 import { X, Clock, RotateCcw, Trash2, Eye } from 'lucide-react'
 
 /* ─── Color Tokens ─── */
@@ -20,15 +21,26 @@ const C = {
 } as const
 
 export default function HistoryModal({ onRestore }: { onRestore?: (noteId: string, content: string, title: string, filePath?: string) => void }) {
-  const { showHistory, setShowHistory, history, selectedNoteId, restoreFromHistory, deleteHistoryEntry } = useAppStore()
+  const { showHistory, setShowHistory, history, selectedNoteId, restoreFromHistory, deleteHistoryEntry, settings, updateHistoryContent } = useAppStore()
   const [previewHistory, setPreviewHistory] = useState<any | null>(null)
 
   if (!showHistory) return null
 
   const noteHistory = history.filter((h) => h.noteId === selectedNoteId)
 
-  const handleRestore = (historyId: string) => {
+  const handleRestore = async (historyId: string) => {
     const entry = noteHistory.find((h) => h.id === historyId)
+    if (!entry) return
+
+    // 远程条目：还原前重新拉取 Gitee 上的最新内容，确保还原的是权威版本
+    if (entry.remote && entry.remotePath && settings.syncConfig.type === 'gitee') {
+      const fresh = await fetchGiteeFileContent(settings.syncConfig, entry.remotePath)
+      if (fresh != null) {
+        updateHistoryContent(entry.id, fresh)
+        entry.content = fresh
+      }
+    }
+
     restoreFromHistory(historyId)
     setPreviewHistory(null)
     // Notify parent so it can handle local file writes

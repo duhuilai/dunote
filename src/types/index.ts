@@ -28,6 +28,10 @@ export interface NoteHistory {
   content: string;
   timestamp: string;
   action: 'create' | 'edit' | 'delete';
+  /** 标记为来自远程(Gitee)的历史记录 */
+  remote?: boolean;
+  /** 远程文件在仓库中的路径，用于还原时重新拉取最新内容 */
+  remotePath?: string;
 }
 
 /* ─── Personnel Types ─── */
@@ -60,13 +64,15 @@ export interface Task {
 
 /* ─── Settings Types ─── */
 export interface SyncConfig {
-  type: 'local' | 'git' | 'gitee' | 'server';
+  type: 'local' | 'gitee';
+  /** Gitee OpenAPI 基地址（软件内置默认，一般无需修改） */
   url: string;
+  /** 仓库名，格式：owner/repo */
+  repo: string;
+  /** 分支，留空则自动使用仓库默认分支 */
   branch: string;
-  username: string;
+  /** 私人访问令牌 (Private Token) */
   token: string;
-  autoSync: boolean;
-  syncInterval: number;
 }
 
 export interface AppSettings {

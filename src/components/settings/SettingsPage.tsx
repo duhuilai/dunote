@@ -88,7 +88,7 @@ export default function SettingsPage() {
             <div>
               <label style={{ ...labelStyle, marginBottom: '8px' }}>同步方式</label>
               <div style={{ display: 'flex', gap: '8px' }}>
-                {(['local', 'git', 'gitee', 'server'] as const).map((type) => {
+                {(['local', 'gitee'] as const).map((type) => {
                   const isActive = syncForm.type === type
                   return (
                     <button
@@ -106,106 +106,65 @@ export default function SettingsPage() {
                         fontFamily: 'inherit',
                       }}
                     >
-                      {type === 'local' ? '本地' : type === 'git' ? 'Git' : type === 'gitee' ? 'Gitee' : '服务器'}
+                      {type === 'local' ? '本地' : 'Gitee'}
                     </button>
                   )
                 })}
               </div>
             </div>
 
-            {/* Remote config fields - only show when not local */}
-            {syncForm.type !== 'local' && (
+            {/* Local mode info */}
+            {syncForm.type === 'local' && (
+              <div style={{ padding: '12px', background: '#F0FDF4', borderRadius: '8px', border: '1px solid #BBF7D0' }}>
+                <div style={{ fontSize: '13px', fontWeight: 500, color: '#166534', marginBottom: '4px' }}>本地模式</div>
+                <div style={{ fontSize: '11px', color: '#15803D' }}>历史记录保存在本地，不会进行远程同步</div>
+              </div>
+            )}
+
+            {/* Gitee config - only token + repo name needed */}
+            {syncForm.type === 'gitee' && (
               <>
-                {/* URL */}
-                <div>
-                  <label style={labelStyle}>
-                    {syncForm.type === 'server' ? '服务器地址' : '仓库地址'}
-                  </label>
-                  <input
-                    value={syncForm.url}
-                    onChange={(e) => setSyncForm({ ...syncForm, url: e.target.value })}
-                    style={inputStyle}
-                    placeholder={syncForm.type === 'server' ? 'https://api.example.com' : 'https://github.com/user/repo.git'}
-                  />
+                <div style={{ padding: '12px', background: '#EFF6FF', borderRadius: '8px', border: '1px solid #BFDBFE' }}>
+                  <div style={{ fontSize: '12px', color: '#1E40AF' }}>
+                    同步地址使用软件内置默认：<code style={{ background: '#DBEAFE', padding: '1px 6px', borderRadius: '4px' }}>https://gitee.com/api/v5</code>
+                    <br />仅需填写「私人令牌」和「仓库名」即可。
+                  </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-                  {/* Branch */}
-                  <div>
-                    <label style={labelStyle}>分支</label>
-                    <input
-                      value={syncForm.branch}
-                      onChange={(e) => setSyncForm({ ...syncForm, branch: e.target.value })}
-                      style={inputStyle}
-                      placeholder="main"
-                    />
-                  </div>
-                  {/* Username */}
-                  <div>
-                    <label style={labelStyle}>用户名</label>
-                    <input
-                      value={syncForm.username}
-                      onChange={(e) => setSyncForm({ ...syncForm, username: e.target.value })}
-                      style={inputStyle}
-                      placeholder="用户名"
-                    />
-                  </div>
+                {/* Repository name */}
+                <div>
+                  <label style={labelStyle}>仓库名</label>
+                  <input
+                    value={syncForm.repo}
+                    onChange={(e) => setSyncForm({ ...syncForm, repo: e.target.value })}
+                    style={inputStyle}
+                    placeholder="owner/repo，例如：duhuilai/dunote-history"
+                  />
                 </div>
 
                 {/* Token */}
                 <div>
-                  <label style={labelStyle}>访问令牌 (Token)</label>
+                  <label style={labelStyle}>私人令牌 (Private Token)</label>
                   <input
                     type="password"
                     value={syncForm.token}
                     onChange={(e) => setSyncForm({ ...syncForm, token: e.target.value })}
                     style={inputStyle}
-                    placeholder="输入访问令牌"
+                    placeholder="在 Gitee「设置 → 私人令牌」中生成"
                   />
                 </div>
 
-                {/* Auto Sync */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: '#F8FAFC', borderRadius: '8px' }}>
-                  <div>
-                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#1E293B' }}>自动同步</div>
-                    <div style={{ fontSize: '11px', color: '#94A3B8' }}>每隔 {syncForm.syncInterval} 分钟自动同步一次</div>
-                  </div>
-                  <button
-                    onClick={() => setSyncForm({ ...syncForm, autoSync: !syncForm.autoSync })}
-                    style={{
-                      width: '44px',
-                      height: '24px',
-                      borderRadius: '9999px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      background: syncForm.autoSync ? '#2563EB' : '#D1D5DB',
-                      position: 'relative',
-                      padding: 0,
-                      fontFamily: 'inherit',
-                    }}
-                  >
-                    <div style={{
-                      width: '20px',
-                      height: '20px',
-                      background: '#FFFFFF',
-                      borderRadius: '50%',
-                      position: 'absolute',
-                      top: '2px',
-                      left: syncForm.autoSync ? '22px' : '2px',
-                      transition: 'left 0.2s',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                    }} />
-                  </button>
+                {/* Optional branch */}
+                <div>
+                  <label style={labelStyle}>分支（选填，留空自动使用默认分支）</label>
+                  <input
+                    value={syncForm.branch}
+                    onChange={(e) => setSyncForm({ ...syncForm, branch: e.target.value })}
+                    style={inputStyle}
+                    placeholder="master / main"
+                  />
                 </div>
               </>
-            )}
-
-            {/* Local mode info */}
-            {syncForm.type === 'local' && (
-              <div style={{ padding: '12px', background: '#F0FDF4', borderRadius: '8px', border: '1px solid #BBF7D0' }}>
-                <div style={{ fontSize: '13px', fontWeight: 500, color: '#166534', marginBottom: '4px' }}>本地模式</div>
-                <div style={{ fontSize: '11px', color: '#15803D' }}>历史记录将保存在本地，不会进行远程同步</div>
-              </div>
             )}
 
             <button

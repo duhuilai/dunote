@@ -5,6 +5,7 @@ import PersonnelPage from '@/components/personnel/PersonnelPage'
 import TasksPage from '@/components/tasks/TasksPage'
 import AnalyticsPage from '@/components/analytics/AnalyticsPage'
 import SettingsPage from '@/components/settings/SettingsPage'
+import Toast from '@/components/ui/Toast'
 
 function App() {
   const currentPage = useAppStore((s) => s.currentPage)
@@ -26,6 +27,7 @@ function App() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
         {renderPage()}
       </div>
+      <Toast />
     </div>
   )
 }

@@ -55,7 +55,7 @@ interface NoteEditorProps {
 }
 
 export default function NoteEditor({ note }: NoteEditorProps) {
-  const { updateNote, addHistoryEntry, setShowHistory, settings } = useAppStore()
+  const { updateNote, addHistoryEntry, setShowHistory, settings, showToast, mergeRemoteHistory } = useAppStore()
   const [showExportMenu, setShowExportMenu] = useState(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -184,52 +184,69 @@ export default function NoteEditor({ note }: NoteEditorProps) {
 
   // Manual history creation
   const handleCreateHistory = async () => {
-    const syncType = settings.syncConfig.type
-    
-    if (syncType === 'local') {
-      // Local mode: create local history entry
+    const syncConfig = settings.syncConfig
+
+    if (syncConfig.type === 'local') {
+      // 本地模式：直接生成一条本地历史
       addHistoryEntry({
         noteId: note.id,
         title: note.title,
         content: editor.getHTML(),
         action: 'edit',
       })
-    } else {
-      // Remote mode: sync to remote instead of creating local history
-      const success = await syncHistoryToRemote(settings.syncConfig, {
+      showToast('已生成本地历史', 'success')
+      return
+    }
+
+    // Gitee 模式：调用接口推送快照
+    if (!syncConfig.token || !syncConfig.repo) {
+      showToast('请先在设置中填写 Gitee 令牌与仓库名', 'error')
+      return
+    }
+    showToast('正在同步到 Gitee…', 'info')
+    const success = await syncHistoryToRemote(syncConfig, {
+      noteId: note.id,
+      title: note.title,
+      content: editor.getHTML(),
+      action: 'edit',
+    })
+
+    if (success) {
+      // 同时保留一条本地记录，便于立即在面板中查看
+      addHistoryEntry({
         noteId: note.id,
         title: note.title,
         content: editor.getHTML(),
         action: 'edit',
       })
-      
-      if (success) {
-        // Show success message (you can replace with a toast notification)
-        console.log('History synced to remote successfully')
-      } else {
-        console.error('Failed to sync history to remote')
-      }
+      showToast('生成成功', 'success')
+    } else {
+      showToast('生成失败，请检查 Gitee 配置或网络', 'error')
     }
   }
 
   // Open history modal
   const handleOpenHistory = async () => {
-    const syncType = settings.syncConfig.type
-    
-    if (syncType !== 'local') {
-      // Remote mode: fetch history from remote first
-      const remoteHistory = await restoreHistoryFromRemote(settings.syncConfig, note.id)
-      
-      if (remoteHistory) {
-        // TODO: Merge remote history with local history or show it separately
-        // For now, just open the history modal with existing local history
-        console.log('Fetched remote history:', remoteHistory.length, 'entries')
+    const syncConfig = settings.syncConfig
+
+    if (syncConfig.type === 'gitee') {
+      if (!syncConfig.token || !syncConfig.repo) {
+        showToast('请先在设置中填写 Gitee 令牌与仓库名', 'error')
       } else {
-        console.warn('Failed to fetch remote history')
+        showToast('正在从 Gitee 拉取历史…', 'info')
+        const remoteHistory = await restoreHistoryFromRemote(syncConfig, note.id)
+        if (remoteHistory && remoteHistory.length > 0) {
+          mergeRemoteHistory(note.id, remoteHistory)
+          showToast(`已拉取 ${remoteHistory.length} 条历史记录`, 'success')
+        } else if (remoteHistory) {
+          showToast('Gitee 暂无该笔记的历史记录', 'info')
+        } else {
+          showToast('拉取历史失败，请检查配置或网络', 'error')
+        }
       }
     }
-    
-    // Open history modal (works for both local and remote modes)
+
+    // 打开历史面板（本地与远程模式都可用）
     setShowHistory(true)
   }
 
