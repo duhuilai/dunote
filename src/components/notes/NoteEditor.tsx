@@ -1,4 +1,4 @@
-import { useEditor, EditorContent } from '@tiptap/react'
+import { useEditor, EditorContent, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Highlight from '@tiptap/extension-highlight'
@@ -60,6 +60,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const baselineContentRef = useRef<string>(note.content || '')
+  const editorRef = useRef<Editor | null>(null)
 
   const editor = useEditor({
     extensions: [
@@ -88,6 +89,37 @@ export default function NoteEditor({ note }: NoteEditorProps) {
     editorProps: {
       attributes: {
         class: 'tiptap',
+      },
+      handleKeyDown: (view, event) => {
+        const ed = editorRef.current
+        if (!ed) return false
+        if (event.key === 'Tab') {
+          // In table: navigate between cells
+          if (ed.isActive('table')) {
+            event.preventDefault()
+            if (event.shiftKey) {
+              ed.commands.goToPreviousCell()
+            } else {
+              ed.commands.goToNextCell()
+            }
+            return true
+          }
+          // In code block: insert 2 spaces
+          if (ed.isActive('codeBlock')) {
+            event.preventDefault()
+            ed.commands.insertContent('  ')
+            return true
+          }
+          // In list / task item: let TipTap handle sink/lift natively
+          if (ed.isActive('listItem') || ed.isActive('taskItem')) {
+            return false
+          }
+          // Default: insert indentation (2 em-spaces for visible tab width)
+          event.preventDefault()
+          ed.commands.insertContent('\u2003\u2003')
+          return true
+        }
+        return false
       },
     },
     onUpdate: ({ editor }) => {
@@ -118,6 +150,9 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       }, 1500)
     },
   })
+
+  // Keep editorRef in sync for use inside handleKeyDown (TipTap v3 passes (view, event), not ({editor, event}))
+  editorRef.current = editor
 
   // Cleanup timeout on unmount
   useEffect(() => {

@@ -713,7 +713,7 @@ export default function NotesPage() {
             }
             buildChildren(rootFolder, result.folders)
             setLocalFolders([rootFolder])
-            setLocalNotes(result.notes)
+            setLocalNotes(prev => mergeScannedNotes(result.notes, prev))
             setSelectedLocalFolder(config.lastLocalFolder)
             // Restore the selected folder ID (sub-folder or root)
             setSelectedFolderId(config.lastSelectedFolderId || 'local-root')
@@ -896,6 +896,19 @@ export default function NotesPage() {
     return { folders, notes }
   }, [])
 
+  // Merge newly scanned notes with existing localNotes to preserve loaded content
+  const mergeScannedNotes = useCallback((newNotes: import('@/types').Note[], prevNotes: import('@/types').Note[]) => {
+    const prevMap = new Map(prevNotes.map(n => [n.id, n]))
+    return newNotes.map(n => {
+      const prev = prevMap.get(n.id)
+      // Preserve content from previously loaded notes so re-scans don't wipe editor data
+      if (prev && prev.content) {
+        return { ...n, content: prev.content }
+      }
+      return n
+    })
+  }, [])
+
   const handleSelectLocalFolder = useCallback(async () => {
     try {
       const selected = await open({
@@ -940,7 +953,7 @@ export default function NotesPage() {
         console.log(`[handleSelectLocalFolder] Final localFolders:`, [rootFolder])
         
         setLocalFolders([rootFolder])
-        setLocalNotes(result.notes)
+        setLocalNotes(prev => mergeScannedNotes(result.notes, prev))
         
         // Select the root folder
         setSelectedFolderId('local-root')
@@ -951,7 +964,7 @@ export default function NotesPage() {
       console.error('Failed to open folder:', error)
       alert('打开文件夹失败: ' + (error instanceof Error ? error.message : String(error)))
     }
-  }, [scanDirectory])
+  }, [scanDirectory, mergeScannedNotes])
 
   const handleCreateNewFolder = useCallback((parentPath?: string) => {
     setShowNewFolderDialog(true)
@@ -1013,13 +1026,13 @@ export default function NotesPage() {
         }
         buildChildren(rootFolder, result.folders)
         setLocalFolders([rootFolder])
-        setLocalNotes(result.notes)
+        setLocalNotes(prev => mergeScannedNotes(result.notes, prev))
       }
     } catch (error) {
       console.error('Failed to create folder:', error)
       alert('创建文件夹失败: ' + (error instanceof Error ? error.message : String(error)))
     }
-  }, [newFolderName, newSubFolderParentPath, selectedLocalFolder, scanDirectory])
+  }, [newFolderName, newSubFolderParentPath, selectedLocalFolder, scanDirectory, mergeScannedNotes])
 
   // Handler for selecting a local file note
   const handleSelectLocalNote = useCallback(async (noteId: string, filePath: string) => {
@@ -1127,13 +1140,13 @@ export default function NotesPage() {
       }
       buildChildren(rootFolder, result.folders)
       setLocalFolders([rootFolder])
-      setLocalNotes(result.notes)
+      setLocalNotes(prev => mergeScannedNotes(result.notes, prev))
       // If the deleted folder was selected, fall back to root
       if (selectedFolderId === folder.id) {
         setSelectedFolderId('local-root')
       }
     }
-  }, [selectedLocalFolder, selectedFolderId, setSelectedFolderId, scanDirectory])
+  }, [selectedLocalFolder, selectedFolderId, setSelectedFolderId, scanDirectory, mergeScannedNotes])
 
   // ─── Folder context menu ───
   const handleFolderContextMenu = useCallback((e: React.MouseEvent, folder: any) => {
@@ -1190,7 +1203,7 @@ export default function NotesPage() {
         }
         buildChildren(rootFolder, result.folders)
         setLocalFolders([rootFolder])
-        setLocalNotes(result.notes)
+        setLocalNotes(prev => mergeScannedNotes(result.notes, prev))
       }
 
       if (errors > 0) {
@@ -1202,7 +1215,7 @@ export default function NotesPage() {
       console.error('[Import] Failed:', err)
       await message('导入失败: ' + (err instanceof Error ? err.message : String(err)), { title: '错误', kind: 'error' })
     }
-  }, [selectedLocalFolder, scanDirectory])
+  }, [selectedLocalFolder, scanDirectory, mergeScannedNotes])
 
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 B'

@@ -37,3 +37,6 @@ Cargo.lock
 
 # OS
 Thumbs.db
+
+# WorkBuddy project data (not source code)
+.workbuddy/

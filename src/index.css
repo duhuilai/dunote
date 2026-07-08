@@ -81,13 +81,61 @@ input, select, textarea { font-family: inherit; }
 .tiptap ul[data-type="taskList"] li[data-checked="true"] > div { text-decoration: line-through; color: var(--color-text-muted); }
 
 /* Table */
-.tiptap table { border-collapse: collapse; width: 100%; margin: 0.8em 0; overflow: hidden; }
-.tiptap table td, .tiptap table th { border: 1px solid var(--color-border); padding: 8px 12px; vertical-align: top; min-width: 80px; font-size: 14px; }
-.tiptap table th { background: #F1F5F9; font-weight: 600; text-align: left; }
-.tiptap table td:focus, .tiptap table th:focus { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+.tiptap .tableWrapper { overflow: visible; border-radius: 4px; }
+.tiptap table { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: 100%; margin: 0.8em 0; overflow: visible; position: relative; }
+.tiptap table td, .tiptap table th {
+  border: 1px solid var(--color-border);
+  padding: 8px 12px;
+  vertical-align: top;
+  min-width: 80px;
+  font-size: 14px;
+  position: relative;
+}
+.tiptap table th {
+  background: #F1F5F9;
+  font-weight: 600;
+  text-align: left;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+.tiptap table td:focus, .tiptap table th:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
 .tiptap .selectedCell { background: rgba(37, 99, 235, 0.08); }
-.tiptap table .column-resize-handle { position: absolute; right: -2px; top: 0; bottom: 0; width: 4px; background: var(--color-primary); pointer-events: none; }
-.tiptap .resize-cursor { cursor: col-resize; }
+.tiptap table .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--color-primary);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.tiptap.resize-cursor,
+.tiptap.resize-cursor td,
+.tiptap.resize-cursor th { cursor: ew-resize; cursor: col-resize; }
+.tiptap.resize-cursor .column-resize-handle { opacity: 1; }
+
+/* Column border hover zone for resize */
+.tiptap table td::after,
+.tiptap table th::after {
+  content: '';
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  pointer-events: none;
+  z-index: 2;
+}
+.tiptap.resize-cursor td::after,
+.tiptap.resize-cursor th::after {
+  background: rgba(37, 99, 235, 0.15);
+}
 
 /* ── Folder Open Button ─── */
 .folder-row:hover .folder-open-btn { 
