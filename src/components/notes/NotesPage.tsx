@@ -9,8 +9,7 @@ import NoteEditor from './NoteEditor'
 import HistoryModal from './HistoryModal'
 import { exportNote, type ExportFormat } from '@/utils/exportNote'
 import { open, message } from '@tauri-apps/plugin-dialog'
-import { readDir, readTextFile, writeTextFile, mkdir, exists, remove } from '@tauri-apps/plugin-fs'
-import { homeDir } from '@tauri-apps/api/path'
+import { readDir, readTextFile, writeTextFile, mkdir, exists, remove, BaseDirectory } from '@tauri-apps/plugin-fs'
 import { marked } from 'marked'
 
 /* ─── Color Tokens ─── */
@@ -679,20 +678,15 @@ export default function NotesPage() {
   const newFolderInputRef             = useRef<HTMLInputElement>(null)
 
   // ─── Persist selected folder across sessions ───
-  const CONFIG_FILE = '.dunote-config.json'
-  const getConfigPath = async () => {
-    const home = await homeDir()
-    return home + CONFIG_FILE
-  }
+  const CONFIG_FILE = 'dunote-config.json'
 
   // Load saved folder on mount
   useEffect(() => {
     (async () => {
       try {
-        const configPath = await getConfigPath()
-        const configExists = await exists(configPath)
+        const configExists = await exists(CONFIG_FILE, { baseDir: BaseDirectory.AppConfig })
         if (configExists) {
-          const raw = await readTextFile(configPath)
+          const raw = await readTextFile(CONFIG_FILE, { baseDir: BaseDirectory.AppConfig })
           const config = JSON.parse(raw)
           if (config.lastLocalFolder) {
             console.log(`[Persistence] Restoring folder: ${config.lastLocalFolder}`)
@@ -731,12 +725,11 @@ export default function NotesPage() {
     if (selectedLocalFolder) {
       (async () => {
         try {
-          const configPath = await getConfigPath()
           const config = { 
             lastLocalFolder: selectedLocalFolder,
             lastSelectedFolderId: selectedFolderId,
           }
-          await writeTextFile(configPath, JSON.stringify(config, null, 2))
+          await writeTextFile(CONFIG_FILE, JSON.stringify(config, null, 2), { baseDir: BaseDirectory.AppConfig })
           console.log(`[Persistence] Saved folder: ${selectedLocalFolder}, selectedId: ${selectedFolderId}`)
         } catch (err) {
           console.warn('[Persistence] Failed to save config:', err)
@@ -1424,8 +1417,7 @@ export default function NotesPage() {
                   setLocalNotes([])
                   // Clear persisted config
                   try {
-                    const configPath = await getConfigPath()
-                    await writeTextFile(configPath, JSON.stringify({}))
+                    await writeTextFile(CONFIG_FILE, JSON.stringify({}), { baseDir: BaseDirectory.AppConfig })
                   } catch (e) { console.warn('Failed to clear config:', e) }
                 }}
                 style={{
