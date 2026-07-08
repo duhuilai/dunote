@@ -18,7 +18,6 @@
     "fs:allow-rename",
     "fs:allow-remove",
     "fs:allow-copy-file",
-    "path:default",
     {
       "identifier": "fs:scope",
       "allow": ["**/*"]
