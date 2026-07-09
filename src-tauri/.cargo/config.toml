@@ -1,0 +1,7 @@
+# MinGW (GNU) 链接器限制 workaround
+# Tauri 的 cdylib (app_lib.dll) 默认会导出全部全局符号，应用代码量大时
+# 导出符号数超过 MinGW ld 的 65535 上限，报 "export ordinal too large"。
+# 由于 app.exe 通过 staticlib 静态链接了 app_lib，运行时不加载 cdylib，
+# 因此让链接器默认不导出任何符号即可（空导出表远低于限制），不影响运行。
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-Wl,--exclude-all-symbols"]
