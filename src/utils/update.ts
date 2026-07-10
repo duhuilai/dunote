@@ -28,6 +28,43 @@ export interface UpdateInfo {
   checked: boolean
 }
 
+/** 下载状态机 */
+export type UpdateDownloadStatus = 'idle' | 'downloading' | 'downloaded' | 'failed'
+
+export interface UpdateDownloadState {
+  /** 当前下载阶段 */
+  status: UpdateDownloadStatus
+  /** 进度百分比 0-100（total 未知时为 0） */
+  progress: number
+  /** 已下载字节数 */
+  loaded: number
+  /** 总字节数（0 表示服务器未返回 Content-Length） */
+  total: number
+  /** 安装包已保存的本地路径（下载完成后才有） */
+  filePath: string | null
+  /** 失败原因 */
+  error: string | null
+}
+
+/** 初始下载状态 */
+export const initialUpdateDownload = (): UpdateDownloadState => ({
+  status: 'idle',
+  progress: 0,
+  loaded: 0,
+  total: 0,
+  filePath: null,
+  error: null,
+})
+
+/** 字节数转可读文本：12.3 MB */
+export function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  const val = bytes / Math.pow(1024, i)
+  return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
 const emptyUpdate = (currentVersion: string): UpdateInfo => ({
   hasUpdate: false,
   currentVersion,
@@ -127,18 +164,22 @@ export async function checkForUpdate(currentVersion: string): Promise<UpdateInfo
 }
 
 /**
- * 下载并按平台启动安装包。
- * 下载到 appConfigDir/updates 后用系统默认程序打开（触发安装向导）。
+ * 流式下载安装包到 appConfigDir/updates，并通过 onProgress 回调上报进度。
+ * 使用 plugin-http 的流式 body 逐块读取并增量写入，避免一次性占用大块内存。
+ * @returns ok 时返回已保存的本地 filePath
  */
-export async function installUpdate(
+export async function downloadUpdate(
   assetUrl: string,
   assetName: string,
-): Promise<{ ok: boolean; message: string }> {
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<{ ok: boolean; filePath?: string; message: string }> {
   try {
     const res = await fetch(assetUrl, { maxRedirections: 10 })
     if (!res.ok) return { ok: false, message: `下载失败：HTTP ${res.status}` }
 
-    const bytes = new Uint8Array(await res.arrayBuffer())
+    const total = Number(res.headers.get('content-length') || 0)
+    const reader = res.body?.getReader()
+    if (!reader) return { ok: false, message: '无法读取下载数据流' }
 
     const baseDir = await appConfigDir()
     const updateDir = await join(baseDir, 'updates')
@@ -146,13 +187,39 @@ export async function installUpdate(
       await mkdir(updateDir, { recursive: true })
     }
     const filePath = await join(updateDir, assetName)
-    await writeFile(filePath, bytes)
 
-    // 用系统关联程序打开安装包（Windows 启动 exe/msi 安装向导，macOS 挂载 dmg）
-    await open(filePath)
-    return { ok: true, message: '已下载安装包，正在启动安装程序…' }
+    let loaded = 0
+    let first = true
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value && value.byteLength > 0) {
+        // 首块覆盖写入（创建文件），后续追加，峰值内存仅一个 chunk
+        await writeFile(filePath, value, first ? { append: false } : { append: true })
+        first = false
+        loaded += value.byteLength
+        onProgress?.(loaded, total)
+      }
+    }
+    onProgress?.(loaded, total || loaded)
+    return { ok: true, filePath, message: '下载完成' }
   } catch (e: any) {
-    const msg = e?.message ? `下载或安装失败：${e.message}` : '下载或安装失败'
+    const msg = e?.message ? `下载失败：${e.message}` : '下载失败'
+    return { ok: false, message: msg }
+  }
+}
+
+/**
+ * 用系统关联程序打开已下载的安装包（Windows 启动 exe/msi 安装向导，macOS 挂载 dmg）。
+ */
+export async function openInstaller(
+  filePath: string,
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    await open(filePath)
+    return { ok: true, message: '正在启动安装程序…' }
+  } catch (e: any) {
+    const msg = e?.message ? `打开安装程序失败：${e.message}` : '打开安装程序失败'
     return { ok: false, message: msg }
   }
 }

@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useAppStore } from '@/store'
 import { Globe, RefreshCw, Palette, Save, Check, TestTube, Download, ExternalLink, Info } from 'lucide-react'
 import { testGiteeConnection } from '@/utils/sync'
-import { checkForUpdate, installUpdate, openReleasePage } from '@/utils/update'
+import { checkForUpdate, openReleasePage } from '@/utils/update'
+import UpdateDownloader from '@/components/update/UpdateDownloader'
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useAppStore()
@@ -20,7 +21,6 @@ export default function SettingsPage() {
   const checkingUpdate = useAppStore((s) => s.checkingUpdate)
   const setCheckingUpdate = useAppStore((s) => s.setCheckingUpdate)
   const showToast = useAppStore((s) => s.showToast)
-  const [downloading, setDownloading] = useState(false)
 
   const handleCheckUpdate = async () => {
     setCheckingUpdate(true)
@@ -33,23 +33,6 @@ export default function SettingsPage() {
       showToast(`发现新版本 v${info.latestVersion}`, 'success')
     } else {
       showToast('已是最新版本', 'info')
-    }
-  }
-
-  const handleDownloadUpdate = async () => {
-    if (!updateInfo?.assetUrl || !updateInfo?.assetName) {
-      // 兜底：打开发布页
-      if (updateInfo?.releaseUrl) await openReleasePage(updateInfo.releaseUrl)
-      return
-    }
-    setDownloading(true)
-    showToast('正在下载更新…', 'info')
-    const res = await installUpdate(updateInfo.assetUrl, updateInfo.assetName)
-    setDownloading(false)
-    if (res.ok) {
-      showToast(res.message || '已启动安装程序', 'success')
-    } else {
-      showToast(res.message || '更新失败', 'error')
     }
   }
 
@@ -385,23 +368,14 @@ export default function SettingsPage() {
                     {updateInfo.releaseNotes}
                   </pre>
                 )}
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                  <button
-                    onClick={handleDownloadUpdate}
-                    disabled={downloading}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#166534', color: '#FFFFFF', fontSize: '13px', fontWeight: 500, border: 'none', cursor: downloading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: downloading ? 0.7 : 1 }}
-                  >
-                    <Download size={15} />
-                    {downloading ? '下载中…' : '下载并更新'}
-                  </button>
-                  <button
-                    onClick={() => openReleasePage(updateInfo.releaseUrl)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#FFFFFF', color: '#2563EB', fontSize: '13px', fontWeight: 500, border: '1px solid #2563EB', cursor: 'pointer', fontFamily: 'inherit' }}
-                  >
-                    <ExternalLink size={15} />
-                    查看发布页
-                  </button>
-                </div>
+                <UpdateDownloader variant="full" />
+                <button
+                  onClick={() => openReleasePage(updateInfo.releaseUrl)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#FFFFFF', color: '#2563EB', fontSize: '13px', fontWeight: 500, border: '1px solid #2563EB', cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  <ExternalLink size={15} />
+                  查看发布页
+                </button>
               </div>
             )}
           </div>

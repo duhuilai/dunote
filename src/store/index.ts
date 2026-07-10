@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Note, NoteFolder, NoteHistory, Person, Task, AppSettings, PageKey } from '@/types';
-import type { UpdateInfo } from '@/utils/update';
+import type { UpdateInfo, UpdateDownloadState } from '@/utils/update';
+import { initialUpdateDownload } from '@/utils/update';
 
 interface AppState {
   // Navigation
@@ -63,6 +64,10 @@ interface AppState {
   setUpdateInfo: (info: UpdateInfo | null) => void;
   checkingUpdate: boolean;
   setCheckingUpdate: (v: boolean) => void;
+  /** 新版本安装包下载状态（进度/安装按钮共享） */
+  updateDownload: UpdateDownloadState;
+  setUpdateDownload: (patch: Partial<UpdateDownloadState>) => void;
+  resetUpdateDownload: () => void;
 
   // 当前打开的本地根文件夹（用于 Gitee 同步按相对路径分层存储）
   localRootFolder: string | null;
@@ -227,4 +232,8 @@ export const useAppStore = create<AppState>((set) => ({
   setUpdateInfo: (info) => set({ updateInfo: info }),
   checkingUpdate: false,
   setCheckingUpdate: (v) => set({ checkingUpdate: v }),
+  updateDownload: initialUpdateDownload(),
+  setUpdateDownload: (patch) =>
+    set((s) => ({ updateDownload: { ...s.updateDownload, ...patch } })),
+  resetUpdateDownload: () => set({ updateDownload: initialUpdateDownload() }),
 }));

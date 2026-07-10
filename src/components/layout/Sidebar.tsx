@@ -1,9 +1,8 @@
-import { useState } from 'react'
 import { useAppStore } from '@/store'
 import type { PageKey } from '@/types'
-import { installUpdate } from '@/utils/update'
+import UpdateDownloader from '@/components/update/UpdateDownloader'
 import {
-  FileText, Users, CheckSquare, BarChart3, Settings, ChevronLeft, ChevronRight, Download, RefreshCw
+  FileText, Users, CheckSquare, BarChart3, Settings, ChevronLeft, ChevronRight
 } from 'lucide-react'
 
 const navItems: { key: PageKey; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
@@ -47,21 +46,6 @@ export default function Sidebar() {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar)
   const appVersion = useAppStore((s) => s.appVersion)
   const updateInfo = useAppStore((s) => s.updateInfo)
-  const showToast = useAppStore((s) => s.showToast)
-  const [downloading, setDownloading] = useState(false)
-
-  const handleDownloadUpdate = async () => {
-    if (!updateInfo?.assetUrl || !updateInfo?.assetName) return
-    setDownloading(true)
-    showToast('正在下载更新…', 'info')
-    const res = await installUpdate(updateInfo.assetUrl, updateInfo.assetName)
-    setDownloading(false)
-    if (res.ok) {
-      showToast(res.message || '已启动安装程序', 'success')
-    } else {
-      showToast(res.message || '更新失败', 'error')
-    }
-  }
 
   return (
     <div style={sidebarCollapsed ? collapsedSidebarStyle : sidebarStyle}>
@@ -186,30 +170,8 @@ export default function Sidebar() {
         </div>
 
         {/* 更新提示 */}
-        {!sidebarCollapsed && updateInfo?.hasUpdate && (
-          <button
-            onClick={handleDownloadUpdate}
-            disabled={downloading}
-            title={`发现新版本 v${updateInfo.latestVersion}，点击下载并更新`}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              width: '100%',
-              padding: '7px 10px',
-              borderRadius: 8,
-              border: '1px solid #BBF7D0',
-              background: '#F0FDF4',
-              color: '#166534',
-              fontSize: 12, fontWeight: 600,
-              cursor: downloading ? 'not-allowed' : 'pointer',
-              fontFamily: 'inherit',
-              opacity: downloading ? 0.7 : 1,
-            }}
-            onMouseEnter={(e) => { if (!downloading) e.currentTarget.style.background = '#DCFCE7' }}
-            onMouseLeave={(e) => { if (!downloading) e.currentTarget.style.background = '#F0FDF4' }}
-          >
-            {downloading ? <RefreshCw size={14} className="spin" /> : <Download size={14} />}
-            {downloading ? '下载中…' : `发现新版本 v${updateInfo.latestVersion}`}
-          </button>
+        {!sidebarCollapsed && (
+          <UpdateDownloader variant="compact" />
         )}
       </div>
     </div>
