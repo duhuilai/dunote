@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { exportNote, type ExportFormat } from '@/utils/exportNote'
-import { syncHistoryToRemote, restoreHistoryFromRemote } from '@/utils/sync'
+import { syncHistoryToRemote, restoreHistoryFromRemote, toRelativePath } from '@/utils/sync'
 import { useAppStore } from '@/store'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 
@@ -55,7 +55,7 @@ interface NoteEditorProps {
 }
 
 export default function NoteEditor({ note }: NoteEditorProps) {
-  const { updateNote, addHistoryEntry, setShowHistory, settings, showToast, mergeRemoteHistory } = useAppStore()
+  const { updateNote, addHistoryEntry, setShowHistory, settings, showToast, mergeRemoteHistory, localRootFolder, appVersion } = useAppStore()
   const [showExportMenu, setShowExportMenu] = useState(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -204,11 +204,16 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       return
     }
     showToast('正在同步到 Gitee…', 'info')
+    const relPath = toRelativePath(note.filePath, localRootFolder)
     const result = await syncHistoryToRemote(syncConfig, {
       noteId: note.id,
       title: note.title,
       content: editor.getHTML(),
       action: 'edit',
+    }, {
+      relPath,
+      appVersion,
+      localPath: note.filePath || '',
     })
 
     if (result.success) {
@@ -234,7 +239,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         showToast('请先在设置中填写 Gitee 令牌与仓库名', 'error')
       } else {
         showToast('正在从 Gitee 拉取历史…', 'info')
-        const result = await restoreHistoryFromRemote(syncConfig, note.id)
+        const relPath = toRelativePath(note.filePath, localRootFolder)
+        const result = await restoreHistoryFromRemote(syncConfig, note.id, relPath)
         if (result.success && result.data && result.data.length > 0) {
           mergeRemoteHistory(note.id, result.data)
           showToast(`已拉取 ${result.data.length} 条历史记录`, 'success')

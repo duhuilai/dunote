@@ -63,6 +63,10 @@ interface AppState {
   setUpdateInfo: (info: UpdateInfo | null) => void;
   checkingUpdate: boolean;
   setCheckingUpdate: (v: boolean) => void;
+
+  // 当前打开的本地根文件夹（用于 Gitee 同步按相对路径分层存储）
+  localRootFolder: string | null;
+  setLocalRootFolder: (p: string | null) => void;
 }
 
 /* ─── Mock Data ─── */
@@ -258,6 +262,10 @@ export const useAppStore = create<AppState>((set) => ({
   // App version & update
   appVersion: '0.0.0',
   setAppVersion: (v) => set({ appVersion: v }),
+
+  // 当前打开的本地根文件夹（用于 Gitee 同步按相对路径分层存储）
+  localRootFolder: null as string | null,
+  setLocalRootFolder: (p: string | null) => set({ localRootFolder: p }),
   updateInfo: null,
   setUpdateInfo: (info) => set({ updateInfo: info }),
   checkingUpdate: false,

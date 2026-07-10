@@ -68,6 +68,41 @@ function sanitizeNoteId(noteId: string): string {
     .replace(/^_+|_+$/g, '')
 }
 
+/**
+ * 计算笔记文件相对「打开的文件夹」根目录的路径。
+ * 用于 Gitee 同步时按本地文件夹层级存储。
+ * 例：absPath="D:/我的笔记/工作/项目A/笔记1.md"，root="D:/我的笔记" → "工作/项目A/笔记1.md"
+ * 不传 root 时返回去掉盘符后的完整路径。
+ */
+export function toRelativePath(absPath?: string, root?: string | null): string {
+  if (!absPath) return ''
+  let p = absPath.replace(/^[A-Za-z]:[\\/]/, '').replace(/\\/g, '/')
+  if (root) {
+    const r = root.replace(/^[A-Za-z]:[\\/]/, '').replace(/\\/g, '/').replace(/\/+$/, '')
+    const rr = r ? r + '/' : ''
+    if (r && p.startsWith(rr)) p = p.slice(rr.length)
+  }
+  return p.replace(/^\/+/, '')
+}
+
+/**
+ * 把层级相对路径清洗为合法的 Gitee 目录路径（保留 / 分隔）。
+ * 例："工作/项目A/笔记1.md" → "工作/项目A/笔记1"（去掉尾部文件扩展名作为目录名）
+ * 无有效路径时回退到 noteId 清洗目录，保证兼容旧数据。
+ */
+function buildHistoryDir(relPath?: string, noteId?: string): string {
+  if (relPath && relPath.trim()) {
+    const cleaned = relPath
+      .replace(/^[A-Za-z]:[\\/]/, '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+      .replace(/\.(md|html?|txt|json)$/i, '') // 去掉文件扩展名，作为目录名
+    if (cleaned) return `${HISTORY_ROOT}/${cleaned}`
+  }
+  return `${HISTORY_ROOT}/${sanitizeNoteId(noteId || 'note')}`
+}
+
 /** 构造认证头（推荐方式，比 URL query 参数更稳定） */
 function authHeaders(token: string): Record<string, string> {
   return { Authorization: `token ${token}` }
@@ -140,9 +175,19 @@ export async function testGiteeConnection(config: SyncConfig): Promise<SyncResul
 }
 
 /* ─── 推送单条历史快照 ─── */
+export interface PushOptions {
+  /** 笔记文件相对「打开的文件夹」根目录的层级路径（如 工作/项目A/笔记1.md），用于分层存储 */
+  relPath?: string
+  /** 应用版本号 */
+  appVersion?: string
+  /** 笔记本地绝对路径 */
+  localPath?: string
+}
+
 export async function pushHistoryToGitee(
   config: SyncConfig,
-  entry: Omit<NoteHistory, 'id' | 'timestamp' | 'remote' | 'remotePath'>
+  entry: Omit<NoteHistory, 'id' | 'timestamp' | 'remote' | 'remotePath'>,
+  opts?: PushOptions
 ): Promise<SyncResult> {
   if (config.type !== 'gitee') {
     return { success: false, message: '同步方式不是 Gitee' }
@@ -165,9 +210,14 @@ export async function pushHistoryToGitee(
     timestamp: ts,
     action: entry.action,
     noteId: entry.noteId,
+    // ── 详细备份信息 ──
+    path: opts?.localPath || '',
+    relativePath: opts?.relPath || '',
+    app: 'duNote',
+    appVersion: opts?.appVersion || '',
   }
-  const safeNoteId = sanitizeNoteId(entry.noteId)
-  const path = `${HISTORY_ROOT}/${safeNoteId}/${ts}.json`
+  const dir = buildHistoryDir(opts?.relPath, entry.noteId)
+  const path = `${dir}/${ts}.json`
   const url = `${base}/repos/${await repoPath(config)}/contents/${encodePath(path)}`
 
   try {
@@ -175,8 +225,8 @@ export async function pushHistoryToGitee(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders(config.token) },
       body: JSON.stringify({
-        content: utf8ToBase64(JSON.stringify(payload)),
-        message: `duNote history: ${entry.title} @ ${ts}`,
+        content: utf8ToBase64(JSON.stringify(payload, null, 2)),
+        message: `duNote 备份: ${entry.title} @ ${ts}`,
         branch,
       }),
     })
@@ -202,7 +252,8 @@ export async function pushHistoryToGitee(
 /* ─── 拉取某条笔记的全部历史快照 ─── */
 export async function pullHistoryFromGitee(
   config: SyncConfig,
-  noteId: string
+  noteId: string,
+  relPath?: string
 ): Promise<SyncResult<NoteHistory[]>> {
   if (config.type !== 'gitee') {
     return { success: false, message: '同步方式不是 Gitee', data: [] }
@@ -219,42 +270,50 @@ export async function pullHistoryFromGitee(
   const branch = branchResult.branch
   const repo = await repoPath(config)
 
-  const safeNoteId = sanitizeNoteId(noteId)
-  const dirPath = `${HISTORY_ROOT}/${safeNoteId}`
-  const listUrl = `${base}/repos/${repo}/contents/${encodePath(dirPath)}?ref=${encodeURIComponent(branch)}`
+  // 候选目录：新结构（层级路径）+ 旧结构（noteId 哈希目录），合并去重以保证兼容
+  const dirCandidates = Array.from(
+    new Set([buildHistoryDir(relPath, noteId), buildHistoryDir(undefined, noteId)])
+  )
 
+  const entries: NoteHistory[] = []
   try {
-    const listRes = await fetch(listUrl, { headers: authHeaders(config.token) })
-    if (!listRes.ok) {
-      if (listRes.status === 404) return { success: true, data: [], message: '远程暂无历史记录' }
-      const err = await listRes.json().catch(() => ({}))
-      return { success: false, message: `列出历史失败（${listRes.status}）：${err.message || ''}`, data: [] }
+    for (const dirPath of dirCandidates) {
+      const listUrl = `${base}/repos/${repo}/contents/${encodePath(dirPath)}?ref=${encodeURIComponent(branch)}`
+      const listRes = await fetch(listUrl, { headers: authHeaders(config.token) })
+      if (!listRes.ok) {
+        if (listRes.status === 404) continue // 该目录不存在，尝试下一个候选
+        const err = await listRes.json().catch(() => ({}))
+        console.warn('[Gitee] 列出历史失败', listRes.status, err)
+        continue
+      }
+
+      const files: Array<{ name: string; path: string }> = await listRes.json()
+      for (const f of files) {
+        if (!f.name.endsWith('.json')) continue
+        const contentUrl = `${base}/repos/${repo}/contents/${encodePath(f.path)}?ref=${encodeURIComponent(branch)}`
+        try {
+          const cRes = await fetch(contentUrl, { headers: authHeaders(config.token) })
+          if (!cRes.ok) continue
+          const cData = await cRes.json()
+          const obj = JSON.parse(base64ToUtf8(cData.content || ''))
+          entries.push({
+            id: f.path,
+            noteId,
+            title: obj.title || noteId,
+            content: obj.content || '',
+            timestamp: obj.timestamp || '',
+            action: obj.action || 'edit',
+            remote: true,
+            remotePath: f.path,
+          })
+        } catch (e) {
+          console.warn('[Gitee] 解析快照失败', f.path, e)
+        }
+      }
     }
 
-    const files: Array<{ name: string; path: string }> = await listRes.json()
-    const entries: NoteHistory[] = []
-
-    for (const f of files) {
-      if (!f.name.endsWith('.json')) continue
-      const contentUrl = `${base}/repos/${repo}/contents/${encodePath(f.path)}?ref=${encodeURIComponent(branch)}`
-      try {
-        const cRes = await fetch(contentUrl, { headers: authHeaders(config.token) })
-        if (!cRes.ok) continue
-        const cData = await cRes.json()
-        const obj = JSON.parse(base64ToUtf8(cData.content || ''))
-        entries.push({
-          id: f.path,
-          noteId,
-          title: obj.title || noteId,
-          content: obj.content || '',
-          timestamp: obj.timestamp || '',
-          action: obj.action || 'edit',
-          remote: true,
-          remotePath: f.path,
-        })
-      } catch (e) {
-        console.warn('[Gitee] 解析快照失败', f.path, e)
-      }
+    if (entries.length === 0) {
+      return { success: true, data: [], message: '远程暂无历史记录' }
     }
 
     entries.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1))
@@ -295,14 +354,16 @@ export async function fetchGiteeFileContent(
 /* ─── 兼容旧调用签名（让 NoteEditor 改动最小） ─── */
 export async function syncHistoryToRemote(
   config: SyncConfig,
-  historyEntry: Omit<NoteHistory, 'id' | 'timestamp' | 'remote' | 'remotePath'>
+  historyEntry: Omit<NoteHistory, 'id' | 'timestamp' | 'remote' | 'remotePath'>,
+  opts?: PushOptions
 ): Promise<SyncResult> {
-  return pushHistoryToGitee(config, historyEntry)
+  return pushHistoryToGitee(config, historyEntry, opts)
 }
 
 export async function restoreHistoryFromRemote(
   config: SyncConfig,
-  noteId: string
+  noteId: string,
+  relPath?: string
 ): Promise<SyncResult<NoteHistory[]>> {
-  return pullHistoryFromGitee(config, noteId)
+  return pullHistoryFromGitee(config, noteId, relPath)
 }

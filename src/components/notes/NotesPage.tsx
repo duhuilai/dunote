@@ -671,7 +671,13 @@ export default function NotesPage() {
   const [selectedLocalFolder, setSelectedLocalFolder] = useState<string | null>(null)
   const [localFolders, setLocalFolders] = useState<import('@/types').NoteFolder[]>([])
   const [localNotes, setLocalNotes] = useState<import('@/types').Note[]>([])
-  
+
+  // 将当前打开的本地根文件夹同步到全局 store，供 Gitee 同步按相对路径分层存储
+  const setLocalRootFolder = useAppStore((s) => s.setLocalRootFolder)
+  useEffect(() => {
+    setLocalRootFolder(selectedLocalFolder)
+  }, [selectedLocalFolder, setLocalRootFolder])
+
   // New folder creation state
   const [showNewFolderDialog, setShowNewFolderDialog] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
