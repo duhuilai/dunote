@@ -529,6 +529,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         }}
       >
         <input
+          key={note.id}
           type="text"
           defaultValue={note.title}
           placeholder="笔记标题"

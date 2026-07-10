@@ -717,6 +717,10 @@ export default function NotesPage() {
             setSelectedLocalFolder(config.lastLocalFolder)
             // Restore the selected folder ID (sub-folder or root)
             setSelectedFolderId(config.lastSelectedFolderId || 'local-root')
+            // Restore the last opened note (if any)
+            if (config.lastSelectedNoteId) {
+              setSelectedNoteId(config.lastSelectedNoteId)
+            }
             console.log(`[Persistence] Restored ${result.folders.length} folders, ${result.notes.length} notes`)
           }
         }
@@ -734,18 +738,19 @@ export default function NotesPage() {
           const config = { 
             lastLocalFolder: selectedLocalFolder,
             lastSelectedFolderId: selectedFolderId,
+            lastSelectedNoteId: selectedNoteId,
           }
           const configDir = await appConfigDir()
           await mkdir(configDir, { recursive: true })
           const configPath = await getConfigPath()
           await writeTextFile(configPath, JSON.stringify(config, null, 2))
-          console.log(`[Persistence] Saved folder: ${selectedLocalFolder}, selectedId: ${selectedFolderId}`)
+          console.log(`[Persistence] Saved folder: ${selectedLocalFolder}, selectedId: ${selectedFolderId}, noteId: ${selectedNoteId}`)
         } catch (err) {
           console.warn('[Persistence] Failed to save config:', err)
         }
       })()
     }
-  }, [selectedLocalFolder, selectedFolderId])
+  }, [selectedLocalFolder, selectedFolderId, selectedNoteId])
 
   // Close type menu when clicking outside
   useEffect(() => {
