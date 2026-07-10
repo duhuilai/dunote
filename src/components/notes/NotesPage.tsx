@@ -833,7 +833,7 @@ export default function NotesPage() {
         id: `note-${Date.now()}`,
         title,
         content: htmlContent,
-        folderId: selectedFolderId || 'f1',
+        folderId: selectedFolderId || '',
         filePath: '/未分类',
         tags: [] as string[],
         createdAt: now,
