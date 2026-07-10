@@ -53,6 +53,7 @@ jobs:
         run: npm run build
       
       - name: Clean old bundle artifacts
+        shell: bash
         run: rm -rf src-tauri/target/release/bundle
       
       - name: Build Tauri app
