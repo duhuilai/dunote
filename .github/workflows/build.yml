@@ -52,6 +52,9 @@ jobs:
       - name: Build frontend
         run: npm run build
       
+      - name: Clean old bundle artifacts
+        run: rm -rf src-tauri/target/release/bundle
+      
       - name: Build Tauri app
         run: npm run tauri build
       
