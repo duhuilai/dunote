@@ -57,6 +57,7 @@ interface NoteEditorProps {
 export default function NoteEditor({ note }: NoteEditorProps) {
   const { updateNote, addHistoryEntry, setShowHistory, settings, showToast, mergeRemoteHistory, localRootFolder, appVersion } = useAppStore()
   const [showExportMenu, setShowExportMenu] = useState(false)
+  const [isCreatingHistory, setIsCreatingHistory] = useState(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const baselineContentRef = useRef<string>(note.content || '')
@@ -184,49 +185,55 @@ export default function NoteEditor({ note }: NoteEditorProps) {
 
   // Manual history creation
   const handleCreateHistory = async () => {
-    const syncConfig = settings.syncConfig
+    if (isCreatingHistory) return
+    setIsCreatingHistory(true)
+    try {
+      const syncConfig = settings.syncConfig
 
-    if (syncConfig.type === 'local') {
-      // 本地模式：直接生成一条本地历史
-      addHistoryEntry({
+      if (syncConfig.type === 'local') {
+        // 本地模式：直接生成一条本地历史
+        addHistoryEntry({
+          noteId: note.id,
+          title: note.title,
+          content: editor.getHTML(),
+          action: 'edit',
+        })
+        showToast('已生成本地历史', 'success')
+        return
+      }
+
+      // Gitee 模式：调用接口推送快照
+      if (!syncConfig.token || !syncConfig.repo) {
+        showToast('请先在设置中填写 Gitee 令牌与仓库名', 'error')
+        return
+      }
+      showToast('正在同步到 Gitee…', 'info')
+      const relPath = toRelativePath(note.filePath, localRootFolder)
+      const result = await syncHistoryToRemote(syncConfig, {
         noteId: note.id,
         title: note.title,
         content: editor.getHTML(),
         action: 'edit',
+      }, {
+        relPath,
+        appVersion,
+        localPath: note.filePath || '',
       })
-      showToast('已生成本地历史', 'success')
-      return
-    }
 
-    // Gitee 模式：调用接口推送快照
-    if (!syncConfig.token || !syncConfig.repo) {
-      showToast('请先在设置中填写 Gitee 令牌与仓库名', 'error')
-      return
-    }
-    showToast('正在同步到 Gitee…', 'info')
-    const relPath = toRelativePath(note.filePath, localRootFolder)
-    const result = await syncHistoryToRemote(syncConfig, {
-      noteId: note.id,
-      title: note.title,
-      content: editor.getHTML(),
-      action: 'edit',
-    }, {
-      relPath,
-      appVersion,
-      localPath: note.filePath || '',
-    })
-
-    if (result.success) {
-      // 同时保留一条本地记录，便于立即在面板中查看
-      addHistoryEntry({
-        noteId: note.id,
-        title: note.title,
-        content: editor.getHTML(),
-        action: 'edit',
-      })
-      showToast('生成成功', 'success')
-    } else {
-      showToast(result.message || '生成失败，请检查 Gitee 配置或网络', 'error')
+      if (result.success) {
+        // 同时保留一条本地记录，便于立即在面板中查看
+        addHistoryEntry({
+          noteId: note.id,
+          title: note.title,
+          content: editor.getHTML(),
+          action: 'edit',
+        })
+        showToast('生成成功', 'success')
+      } else {
+        showToast(result.message || '生成失败，请检查 Gitee 配置或网络', 'error')
+      }
+    } finally {
+      setIsCreatingHistory(false)
     }
   }
 
@@ -1717,7 +1724,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button
             onClick={handleCreateHistory}
-            title="生成历史记录"
+            disabled={isCreatingHistory}
+            title={isCreatingHistory ? '正在生成历史…' : '生成历史记录'}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -1729,21 +1737,24 @@ export default function NoteEditor({ note }: NoteEditorProps) {
               color: C.primary,
               fontSize: '12px',
               fontWeight: 500,
-              cursor: 'pointer',
+              cursor: isCreatingHistory ? 'not-allowed' : 'pointer',
               fontFamily: 'inherit',
               transition: 'all 0.15s',
+              opacity: isCreatingHistory ? 0.7 : 1,
             }}
             onMouseEnter={(e) => {
+              if (isCreatingHistory) return
               e.currentTarget.style.background = C.primaryLight
               e.currentTarget.style.borderColor = C.primary
             }}
             onMouseLeave={(e) => {
+              if (isCreatingHistory) return
               e.currentTarget.style.background = C.surface
               e.currentTarget.style.borderColor = C.border
             }}
           >
             <Clock size={14} />
-            <span>生成历史</span>
+            <span>{isCreatingHistory ? '生成中…' : '生成历史'}</span>
           </button>
 
           <button
