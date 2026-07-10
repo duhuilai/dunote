@@ -204,14 +204,14 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       return
     }
     showToast('正在同步到 Gitee…', 'info')
-    const success = await syncHistoryToRemote(syncConfig, {
+    const result = await syncHistoryToRemote(syncConfig, {
       noteId: note.id,
       title: note.title,
       content: editor.getHTML(),
       action: 'edit',
     })
 
-    if (success) {
+    if (result.success) {
       // 同时保留一条本地记录，便于立即在面板中查看
       addHistoryEntry({
         noteId: note.id,
@@ -221,7 +221,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       })
       showToast('生成成功', 'success')
     } else {
-      showToast('生成失败，请检查 Gitee 配置或网络', 'error')
+      showToast(result.message || '生成失败，请检查 Gitee 配置或网络', 'error')
     }
   }
 
@@ -234,14 +234,14 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         showToast('请先在设置中填写 Gitee 令牌与仓库名', 'error')
       } else {
         showToast('正在从 Gitee 拉取历史…', 'info')
-        const remoteHistory = await restoreHistoryFromRemote(syncConfig, note.id)
-        if (remoteHistory && remoteHistory.length > 0) {
-          mergeRemoteHistory(note.id, remoteHistory)
-          showToast(`已拉取 ${remoteHistory.length} 条历史记录`, 'success')
-        } else if (remoteHistory) {
-          showToast('Gitee 暂无该笔记的历史记录', 'info')
+        const result = await restoreHistoryFromRemote(syncConfig, note.id)
+        if (result.success && result.data && result.data.length > 0) {
+          mergeRemoteHistory(note.id, result.data)
+          showToast(`已拉取 ${result.data.length} 条历史记录`, 'success')
+        } else if (result.success) {
+          showToast(result.message || 'Gitee 暂无该笔记的历史记录', 'info')
         } else {
-          showToast('拉取历史失败，请检查配置或网络', 'error')
+          showToast(result.message || '拉取历史失败，请检查配置或网络', 'error')
         }
       }
     }

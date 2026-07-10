@@ -1,13 +1,28 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store'
-import { Globe, RefreshCw, Palette, Save, Check } from 'lucide-react'
+import { Globe, RefreshCw, Palette, Save, Check, TestTube } from 'lucide-react'
+import { testGiteeConnection } from '@/utils/sync'
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useAppStore()
   const { syncConfig } = settings
   const [syncForm, setSyncForm] = useState(syncConfig)
   const [saved, setSaved] = useState(false)
+  const [testMsg, setTestMsg] = useState<{ text: string; ok: boolean } | null>(null)
+  const [testing, setTesting] = useState(false)
   const [newColor, setNewColor] = useState({ name: '', color: '#2563EB' })
+
+  const handleTestConnection = async () => {
+    if (!syncForm.token || !syncForm.repo) {
+      setTestMsg({ text: '请填写 Gitee 私人令牌和仓库名', ok: false })
+      return
+    }
+    setTesting(true)
+    setTestMsg(null)
+    const result = await testGiteeConnection(syncForm)
+    setTesting(false)
+    setTestMsg({ text: result.message || (result.success ? '连接成功' : '连接失败'), ok: result.success })
+  }
 
   const handleSaveSync = () => {
     updateSettings({ syncConfig: syncForm })
@@ -167,13 +182,30 @@ export default function SettingsPage() {
               </>
             )}
 
-            <button
-              onClick={handleSaveSync}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#2563EB', color: '#FFFFFF', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
-            >
-              {saved ? <Check size={15} /> : <Save size={15} />}
-              {saved ? '已保存' : '保存配置'}
-            </button>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <button
+                onClick={handleSaveSync}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#2563EB', color: '#FFFFFF', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                {saved ? <Check size={15} /> : <Save size={15} />}
+                {saved ? '已保存' : '保存配置'}
+              </button>
+              {syncForm.type === 'gitee' && (
+                <button
+                  onClick={handleTestConnection}
+                  disabled={testing}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#FFFFFF', color: '#2563EB', fontSize: '13px', fontWeight: 500, border: '1px solid #2563EB', cursor: testing ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: testing ? 0.7 : 1 }}
+                >
+                  <TestTube size={15} />
+                  {testing ? '测试中…' : '测试连接'}
+                </button>
+              )}
+            </div>
+            {testMsg && (
+              <div style={{ padding: '10px 12px', borderRadius: '8px', fontSize: '12px', background: testMsg.ok ? '#F0FDF4' : '#FEF2F2', color: testMsg.ok ? '#166534' : '#991B1B', border: `1px solid ${testMsg.ok ? '#BBF7D0' : '#FECACA'}` }}>
+                {testMsg.text}
+              </div>
+            )}
           </div>
         </div>
 

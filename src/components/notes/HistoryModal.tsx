@@ -34,7 +34,7 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
 
     // 远程条目：还原前重新拉取 Gitee 上的最新内容，确保还原的是权威版本
     if (entry.remote && entry.remotePath && settings.syncConfig.type === 'gitee') {
-      const fresh = await fetchGiteeFileContent(settings.syncConfig, entry.remotePath)
+      const fresh = await fetchGiteeFileContent(settings.syncConfig, entry.noteId, entry.remotePath)
       if (fresh != null) {
         updateHistoryContent(entry.id, fresh)
         entry.content = fresh
