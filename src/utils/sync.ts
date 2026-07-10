@@ -97,8 +97,9 @@ export function toRelativePath(absPath?: string, root?: string | null): string {
 /**
  * 把层级相对路径清洗为合法的 Gitee 目录路径（保留 / 分隔）。
  * 结构：完全镜像本地打开的文件夹层级，末级文件夹即笔记名，里面放时间戳备份文件。
- * 例：relPath="dunote/会议纪要/2026-05-11亚林所/2026-05-11亚林所.md"
- *   → "dunote/会议纪要/2026-05-11亚林所"（去掉最后一段文件名，目录即笔记容器）
+ * 例：relPath="知识库/内控系统.md" → "知识库/内控系统"
+ *     relPath="dunote/会议纪要/2026-05-11亚林所/2026-05-11亚林所.md"
+ *     → "dunote/会议纪要/2026-05-11亚林所/2026-05-11亚林所"
  * 无有效路径时回退到 noteId 清洗目录，保证兼容旧数据。
  */
 function buildHistoryDir(relPath?: string, noteId?: string): string {
@@ -108,11 +109,18 @@ function buildHistoryDir(relPath?: string, noteId?: string): string {
       .replace(/\\/g, '/')
       .replace(/^\/+/, '')
       .replace(/\/+$/, '')
-    // 去掉最后一段文件名（.md/.txt 等），保留其所在目录作为备份容器（末级文件夹=笔记名）
-    cleaned = cleaned.replace(/\/[^/]+\.(md|html?|txt|json)$/i, '')
+    // 仅去掉文件扩展名；文件/文件夹名本身作为末级容器（笔记名文件夹）
+    cleaned = cleaned.replace(/\.(md|html?|txt|json)$/i, '')
     if (cleaned) return cleaned
   }
   return sanitizeNoteId(noteId || 'note')
+}
+
+/** 取 path 的父目录（空则返回空） */
+function parentDir(path?: string): string {
+  if (!path) return ''
+  const segs = path.replace(/\\/g, '/').split('/').filter(Boolean)
+  return segs.length <= 1 ? '' : segs.slice(0, -1).join('/')
 }
 
 /** 构造认证头（推荐方式，比 URL query 参数更稳定） */
@@ -282,13 +290,17 @@ export async function pullHistoryFromGitee(
   const branch = branchResult.branch
   const repo = await repoPath(config)
 
-  // 候选目录：新结构（层级路径）+ 旧结构（dunote-history 前缀单层目录），合并去重以保证兼容
+  // 候选目录：新结构（层级路径）+ v0.1.17 旧结构（缺少笔记名层）+ 旧结构（dunote-history 前缀单层目录），合并去重以保证兼容
+  const newDir = buildHistoryDir(relPath, noteId)
   const dirCandidates = Array.from(
-    new Set([
-      buildHistoryDir(relPath, noteId),
-      buildHistoryDir(undefined, noteId),
-      `${HISTORY_ROOT}/${sanitizeNoteId(noteId || 'note')}`,
-    ])
+    new Set(
+      [
+        newDir,
+        parentDir(newDir), // 兼容 v0.1.17：文件平铺在父目录下
+        buildHistoryDir(undefined, noteId),
+        `${HISTORY_ROOT}/${sanitizeNoteId(noteId || 'note')}`,
+      ].filter(Boolean)
+    )
   )
 
   const entries: NoteHistory[] = []
