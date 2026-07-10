@@ -1,4 +1,5 @@
 import { open } from '@tauri-apps/plugin-shell'
+import { fetch } from '@tauri-apps/plugin-http'
 import { writeFile, mkdir, exists } from '@tauri-apps/plugin-fs'
 import { appConfigDir, join } from '@tauri-apps/api/path'
 
@@ -94,6 +95,7 @@ export async function checkForUpdate(currentVersion: string): Promise<UpdateInfo
   try {
     const res = await fetch(RELEASE_API, {
       headers: { Accept: 'application/vnd.github+json' },
+      maxRedirections: 10,
     })
     if (!res.ok) {
       return { ...emptyUpdate(currentVersion), error: `GitHub 返回 ${res.status}` }
@@ -133,7 +135,7 @@ export async function installUpdate(
   assetName: string,
 ): Promise<{ ok: boolean; message: string }> {
   try {
-    const res = await fetch(assetUrl)
+    const res = await fetch(assetUrl, { maxRedirections: 10 })
     if (!res.ok) return { ok: false, message: `下载失败：HTTP ${res.status}` }
 
     const bytes = new Uint8Array(await res.arrayBuffer())

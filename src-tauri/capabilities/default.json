@@ -20,6 +20,16 @@
     "fs:allow-copy-file",
     "fs:allow-write-file",
     "shell:allow-open",
+    "http:default",
+    {
+      "identifier": "http:allow-fetch",
+      "allow": [
+        { "url": "https://api.github.com" },
+        { "url": "https://github.com" },
+        { "url": "https://*.github.com" },
+        { "url": "https://*.githubusercontent.com" }
+      ]
+    },
     {
       "identifier": "fs:scope",
       "allow": ["**/*"]
