@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store'
-import { Globe, RefreshCw, Palette, Save, Check, TestTube } from 'lucide-react'
+import { Globe, RefreshCw, Palette, Save, Check, TestTube, Download, ExternalLink, Info } from 'lucide-react'
 import { testGiteeConnection } from '@/utils/sync'
+import { checkForUpdate, installUpdate, openReleasePage } from '@/utils/update'
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useAppStore()
@@ -11,6 +12,46 @@ export default function SettingsPage() {
   const [testMsg, setTestMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [testing, setTesting] = useState(false)
   const [newColor, setNewColor] = useState({ name: '', color: '#2563EB' })
+
+  // 更新相关
+  const appVersion = useAppStore((s) => s.appVersion)
+  const updateInfo = useAppStore((s) => s.updateInfo)
+  const setUpdateInfo = useAppStore((s) => s.setUpdateInfo)
+  const checkingUpdate = useAppStore((s) => s.checkingUpdate)
+  const setCheckingUpdate = useAppStore((s) => s.setCheckingUpdate)
+  const showToast = useAppStore((s) => s.showToast)
+  const [downloading, setDownloading] = useState(false)
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true)
+    const info = await checkForUpdate(appVersion)
+    setUpdateInfo(info)
+    setCheckingUpdate(false)
+    if (info.error) {
+      showToast(info.error, 'error')
+    } else if (info.hasUpdate) {
+      showToast(`发现新版本 v${info.latestVersion}`, 'success')
+    } else {
+      showToast('已是最新版本', 'info')
+    }
+  }
+
+  const handleDownloadUpdate = async () => {
+    if (!updateInfo?.assetUrl || !updateInfo?.assetName) {
+      // 兜底：打开发布页
+      if (updateInfo?.releaseUrl) await openReleasePage(updateInfo.releaseUrl)
+      return
+    }
+    setDownloading(true)
+    showToast('正在下载更新…', 'info')
+    const res = await installUpdate(updateInfo.assetUrl, updateInfo.assetName)
+    setDownloading(false)
+    if (res.ok) {
+      showToast(res.message || '已启动安装程序', 'success')
+    } else {
+      showToast(res.message || '更新失败', 'error')
+    }
+  }
 
   const handleTestConnection = async () => {
     if (!syncForm.token || !syncForm.repo) {
@@ -288,6 +329,81 @@ export default function SettingsPage() {
                 添加
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* About & Update */}
+        <div style={sectionCardStyle}>
+          <div style={sectionHeaderStyle}>
+            <Info size={16} style={{ color: '#2563EB' }} />
+            <h3 style={sectionTitleStyle}>关于与更新</h3>
+          </div>
+          <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Version row */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: '13px', color: '#1E293B' }}>
+                  duNote <span style={{ fontWeight: 600 }}>v{appVersion}</span>
+                </div>
+                <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>
+                  当前版本
+                  {updateInfo?.checked && !updateInfo.error && (
+                    updateInfo.hasUpdate
+                      ? ` · 最新版本 v${updateInfo.latestVersion}`
+                      : ' · 已是最新版本'
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={handleCheckUpdate}
+                disabled={checkingUpdate}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#FFFFFF', color: '#2563EB', fontSize: '13px', fontWeight: 500, border: '1px solid #2563EB', cursor: checkingUpdate ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: checkingUpdate ? 0.7 : 1 }}
+              >
+                <RefreshCw size={15} className={checkingUpdate ? 'spin' : ''} />
+                {checkingUpdate ? '检查中…' : '检查更新'}
+              </button>
+            </div>
+
+            {/* Error */}
+            {updateInfo?.error && (
+              <div style={{ padding: '10px 12px', borderRadius: '8px', fontSize: '12px', background: '#FEF2F2', color: '#991B1B', border: '1px solid #FECACA' }}>
+                {updateInfo.error}
+              </div>
+            )}
+
+            {/* Update available */}
+            {updateInfo?.hasUpdate && (
+              <div style={{ padding: '14px', borderRadius: '10px', background: '#F0FDF4', border: '1px solid #BBF7D0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Download size={16} style={{ color: '#166534' }} />
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#166534' }}>
+                    发现新版本 v{updateInfo.latestVersion}
+                  </span>
+                </div>
+                {updateInfo.releaseNotes && (
+                  <pre style={{ margin: 0, padding: '12px', background: '#FFFFFF', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '11px', lineHeight: 1.6, color: '#475569', maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
+                    {updateInfo.releaseNotes}
+                  </pre>
+                )}
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                  <button
+                    onClick={handleDownloadUpdate}
+                    disabled={downloading}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#166534', color: '#FFFFFF', fontSize: '13px', fontWeight: 500, border: 'none', cursor: downloading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: downloading ? 0.7 : 1 }}
+                  >
+                    <Download size={15} />
+                    {downloading ? '下载中…' : '下载并更新'}
+                  </button>
+                  <button
+                    onClick={() => openReleasePage(updateInfo.releaseUrl)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#FFFFFF', color: '#2563EB', fontSize: '13px', fontWeight: 500, border: '1px solid #2563EB', cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    <ExternalLink size={15} />
+                    查看发布页
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

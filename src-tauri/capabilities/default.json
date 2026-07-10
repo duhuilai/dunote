@@ -18,6 +18,8 @@
     "fs:allow-rename",
     "fs:allow-remove",
     "fs:allow-copy-file",
+    "fs:allow-write-file",
+    "shell:allow-open",
     {
       "identifier": "fs:scope",
       "allow": ["**/*"]

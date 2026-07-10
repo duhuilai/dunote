@@ -1,4 +1,7 @@
+import { useEffect } from 'react'
+import { getVersion } from '@tauri-apps/api/app'
 import { useAppStore } from '@/store'
+import { checkForUpdate } from '@/utils/update'
 import Sidebar from '@/components/layout/Sidebar'
 import NotesPage from '@/components/notes/NotesPage'
 import PersonnelPage from '@/components/personnel/PersonnelPage'
@@ -9,6 +12,31 @@ import Toast from '@/components/ui/Toast'
 
 function App() {
   const currentPage = useAppStore((s) => s.currentPage)
+  const setAppVersion = useAppStore((s) => s.setAppVersion)
+  const setUpdateInfo = useAppStore((s) => s.setUpdateInfo)
+  const setCheckingUpdate = useAppStore((s) => s.setCheckingUpdate)
+
+  // 启动时获取真实版本号并自动检查更新
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const v = await getVersion()
+        if (cancelled) return
+        setAppVersion(v)
+        setCheckingUpdate(true)
+        const info = await checkForUpdate(v)
+        if (!cancelled) setUpdateInfo(info)
+      } catch {
+        /* 获取版本失败时使用默认值 */
+      } finally {
+        if (!cancelled) setCheckingUpdate(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [setAppVersion, setUpdateInfo, setCheckingUpdate])
 
   const renderPage = () => {
     switch (currentPage) {
@@ -33,3 +61,4 @@ function App() {
 }
 
 export default App
+

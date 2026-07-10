@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Note, NoteFolder, NoteHistory, Person, Task, AppSettings, PageKey } from '@/types';
+import type { UpdateInfo } from '@/utils/update';
 
 interface AppState {
   // Navigation
@@ -54,6 +55,14 @@ interface AppState {
   // Settings
   settings: AppSettings;
   updateSettings: (updates: Partial<AppSettings>) => void;
+
+  // App version & update
+  appVersion: string;
+  setAppVersion: (v: string) => void;
+  updateInfo: UpdateInfo | null;
+  setUpdateInfo: (info: UpdateInfo | null) => void;
+  checkingUpdate: boolean;
+  setCheckingUpdate: (v: boolean) => void;
 }
 
 /* ─── Mock Data ─── */
@@ -245,4 +254,12 @@ export const useAppStore = create<AppState>((set) => ({
   updateSettings: (updates) => set((s) => ({
     settings: { ...s.settings, ...updates },
   })),
+
+  // App version & update
+  appVersion: '0.0.0',
+  setAppVersion: (v) => set({ appVersion: v }),
+  updateInfo: null,
+  setUpdateInfo: (info) => set({ updateInfo: info }),
+  checkingUpdate: false,
+  setCheckingUpdate: (v) => set({ checkingUpdate: v }),
 }));
