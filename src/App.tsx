@@ -15,6 +15,12 @@ function App() {
   const setAppVersion = useAppStore((s) => s.setAppVersion)
   const setUpdateInfo = useAppStore((s) => s.setUpdateInfo)
   const setCheckingUpdate = useAppStore((s) => s.setCheckingUpdate)
+  const loadSettings = useAppStore((s) => s.loadSettings)
+
+  // 启动时加载持久化设置并获取真实版本号/检查更新
+  useEffect(() => {
+    loadSettings()
+  }, [loadSettings])
 
   // 启动时获取真实版本号并自动检查更新
   useEffect(() => {

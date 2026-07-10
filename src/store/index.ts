@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Note, NoteFolder, NoteHistory, Person, Task, AppSettings, PageKey } from '@/types';
 import type { UpdateInfo, UpdateDownloadState } from '@/utils/update';
 import { initialUpdateDownload } from '@/utils/update';
+import { defaultSettings, loadSettings, saveSettings } from '@/utils/settingsStorage';
 
 interface AppState {
   // Navigation
@@ -56,6 +57,7 @@ interface AppState {
   // Settings
   settings: AppSettings;
   updateSettings: (updates: Partial<AppSettings>) => void;
+  loadSettings: () => Promise<void>;
 
   // App version & update
   appVersion: string;
@@ -198,28 +200,16 @@ export const useAppStore = create<AppState>((set) => ({
   })),
 
   // Settings
-  settings: {
-    language: 'zh-CN',
-    syncConfig: {
-      type: 'local',
-      url: 'https://gitee.com/api/v5',
-      repo: '',
-      branch: '',
-      token: '',
-    },
-    customColors: {
-      '标签-重要': '#EF4444',
-      '标签-工作': '#2563EB',
-      '标签-学习': '#10B981',
-      '标签-生活': '#F59E0B',
-      '标签-灵感': '#8B5CF6',
-      '标签-归档': '#64748B',
-    },
-    theme: 'light',
+  settings: defaultSettings,
+  updateSettings: (updates) => set((s) => {
+    const next = { ...s.settings, ...updates }
+    saveSettings(next)
+    return { settings: next }
+  }),
+  loadSettings: async () => {
+    const persisted = await loadSettings()
+    set({ settings: persisted })
   },
-  updateSettings: (updates) => set((s) => ({
-    settings: { ...s.settings, ...updates },
-  })),
 
   // App version & update
   appVersion: '0.0.0',

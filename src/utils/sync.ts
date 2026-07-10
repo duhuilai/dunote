@@ -239,6 +239,7 @@ export async function pushHistoryToGitee(
   const dir = buildHistoryDir(opts?.relPath, entry.noteId)
   const path = `${dir}/${flatTimestamp()}.json`
   const url = `${base}/repos/${await repoPath(config)}/contents/${encodePath(path)}`
+  console.log('[Gitee] 推送路径', path, 'URL', url)
 
   try {
     const res = await fetch(url, {
