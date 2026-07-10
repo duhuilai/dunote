@@ -68,6 +68,15 @@ function sanitizeNoteId(noteId: string): string {
     .replace(/^_+|_+$/g, '')
 }
 
+/** 紧凑本地时间戳 YYYYMMDDHHMMSSmmm（如 20260710182398284），用于备份文件名 */
+function flatTimestamp(d: Date = new Date()): string {
+  const p = (n: number, l = 2) => String(n).padStart(l, '0')
+  return (
+    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+    `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}${p(d.getMilliseconds(), 3)}`
+  )
+}
+
 /**
  * 计算笔记文件相对「打开的文件夹」根目录的路径。
  * 用于 Gitee 同步时按本地文件夹层级存储。
@@ -87,20 +96,23 @@ export function toRelativePath(absPath?: string, root?: string | null): string {
 
 /**
  * 把层级相对路径清洗为合法的 Gitee 目录路径（保留 / 分隔）。
- * 例："工作/项目A/笔记1.md" → "工作/项目A/笔记1"（去掉尾部文件扩展名作为目录名）
+ * 结构：完全镜像本地打开的文件夹层级，末级文件夹即笔记名，里面放时间戳备份文件。
+ * 例：relPath="dunote/会议纪要/2026-05-11亚林所/2026-05-11亚林所.md"
+ *   → "dunote/会议纪要/2026-05-11亚林所"（去掉最后一段文件名，目录即笔记容器）
  * 无有效路径时回退到 noteId 清洗目录，保证兼容旧数据。
  */
 function buildHistoryDir(relPath?: string, noteId?: string): string {
   if (relPath && relPath.trim()) {
-    const cleaned = relPath
+    let cleaned = relPath
       .replace(/^[A-Za-z]:[\\/]/, '')
       .replace(/\\/g, '/')
       .replace(/^\/+/, '')
       .replace(/\/+$/, '')
-      .replace(/\.(md|html?|txt|json)$/i, '') // 去掉文件扩展名，作为目录名
-    if (cleaned) return `${HISTORY_ROOT}/${cleaned}`
+    // 去掉最后一段文件名（.md/.txt 等），保留其所在目录作为备份容器（末级文件夹=笔记名）
+    cleaned = cleaned.replace(/\/[^/]+\.(md|html?|txt|json)$/i, '')
+    if (cleaned) return cleaned
   }
-  return `${HISTORY_ROOT}/${sanitizeNoteId(noteId || 'note')}`
+  return sanitizeNoteId(noteId || 'note')
 }
 
 /** 构造认证头（推荐方式，比 URL query 参数更稳定） */
@@ -217,7 +229,7 @@ export async function pushHistoryToGitee(
     appVersion: opts?.appVersion || '',
   }
   const dir = buildHistoryDir(opts?.relPath, entry.noteId)
-  const path = `${dir}/${ts}.json`
+  const path = `${dir}/${flatTimestamp()}.json`
   const url = `${base}/repos/${await repoPath(config)}/contents/${encodePath(path)}`
 
   try {
@@ -270,9 +282,13 @@ export async function pullHistoryFromGitee(
   const branch = branchResult.branch
   const repo = await repoPath(config)
 
-  // 候选目录：新结构（层级路径）+ 旧结构（noteId 哈希目录），合并去重以保证兼容
+  // 候选目录：新结构（层级路径）+ 旧结构（dunote-history 前缀单层目录），合并去重以保证兼容
   const dirCandidates = Array.from(
-    new Set([buildHistoryDir(relPath, noteId), buildHistoryDir(undefined, noteId)])
+    new Set([
+      buildHistoryDir(relPath, noteId),
+      buildHistoryDir(undefined, noteId),
+      `${HISTORY_ROOT}/${sanitizeNoteId(noteId || 'note')}`,
+    ])
   )
 
   const entries: NoteHistory[] = []

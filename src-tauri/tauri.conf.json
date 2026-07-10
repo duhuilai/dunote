@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "duNote",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "identifier": "com.dunote.app",
   "build": {
     "frontendDist": "../dist",
