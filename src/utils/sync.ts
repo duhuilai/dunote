@@ -34,6 +34,31 @@ function encodePath(p: string): string {
   return p.split('/').map((seg) => encodeURIComponent(seg)).join('/')
 }
 
+/**
+ * 把仓库标识转成 API 路径段（owner/repo）。
+ * - 关键：路径中的 / 必须分段编码，绝不能整体 encodeURIComponent，
+ *   否则 "owner/repo" 会变成 "owner%2Frepo"，Gitee 视为单段路径而返回 404 Not Found Project。
+ * - 支持用户填写 "owner/repo" 或仅填仓库名：
+ *   仅仓库名时，用私人令牌调 /user 自动探测当前登录用户作为 owner。
+ */
+async function repoPath(config: SyncConfig): Promise<string> {
+  let repo = (config.repo || '').trim()
+  if (!repo) return ''
+  if (!repo.includes('/')) {
+    try {
+      const me = await fetch(`${apiBase(config)}/user`, { headers: authHeaders(config.token) })
+      if (me.ok) {
+        const d = await me.json().catch(() => ({}))
+        const owner = d.login || d.username
+        if (owner) repo = `${owner}/${repo}`
+      }
+    } catch {
+      /* 探测失败时退回原 repo（下面会因缺 owner 而 404，错误信息会提示填写 owner/repo） */
+    }
+  }
+  return repo.split('/').filter(Boolean).map((s) => encodeURIComponent(s)).join('/')
+}
+
 /** 把 noteId 清洗成合法的远程目录/文件名字段（避免 :、\、中文空格等） */
 function sanitizeNoteId(noteId: string): string {
   // 保留可读性：字母数字、点、下划线、横线；其他替换为下划线；连续多个下划线合并
@@ -62,7 +87,7 @@ function base64ToUtf8(b64: string): string {
 async function resolveBranch(config: SyncConfig): Promise<{ branch: string; message?: string }> {
   if (config.branch && config.branch.trim()) return { branch: config.branch.trim() }
   const base = apiBase(config)
-  const url = `${base}/repos/${encodeURIComponent(config.repo)}`
+  const url = `${base}/repos/${await repoPath(config)}`
   try {
     const res = await fetch(url, { headers: authHeaders(config.token) })
     if (!res.ok) {
@@ -91,7 +116,7 @@ export async function testGiteeConnection(config: SyncConfig): Promise<SyncResul
     return { success: false, message: '请填写 Gitee 私人令牌和仓库名' }
   }
   const base = apiBase(config)
-  const url = `${base}/repos/${encodeURIComponent(config.repo)}`
+  const url = `${base}/repos/${await repoPath(config)}`
   try {
     const res = await fetch(url, { headers: authHeaders(config.token) })
     if (!res.ok) {
@@ -143,7 +168,7 @@ export async function pushHistoryToGitee(
   }
   const safeNoteId = sanitizeNoteId(entry.noteId)
   const path = `${HISTORY_ROOT}/${safeNoteId}/${ts}.json`
-  const url = `${base}/repos/${encodeURIComponent(config.repo)}/contents/${encodePath(path)}`
+  const url = `${base}/repos/${await repoPath(config)}/contents/${encodePath(path)}`
 
   try {
     const res = await fetch(url, {
@@ -192,10 +217,11 @@ export async function pullHistoryFromGitee(
     return { success: false, message: branchResult.message, data: [] }
   }
   const branch = branchResult.branch
+  const repo = await repoPath(config)
 
   const safeNoteId = sanitizeNoteId(noteId)
   const dirPath = `${HISTORY_ROOT}/${safeNoteId}`
-  const listUrl = `${base}/repos/${encodeURIComponent(config.repo)}/contents/${encodePath(dirPath)}?ref=${encodeURIComponent(branch)}`
+  const listUrl = `${base}/repos/${repo}/contents/${encodePath(dirPath)}?ref=${encodeURIComponent(branch)}`
 
   try {
     const listRes = await fetch(listUrl, { headers: authHeaders(config.token) })
@@ -210,7 +236,7 @@ export async function pullHistoryFromGitee(
 
     for (const f of files) {
       if (!f.name.endsWith('.json')) continue
-      const contentUrl = `${base}/repos/${encodeURIComponent(config.repo)}/contents/${encodePath(f.path)}?ref=${encodeURIComponent(branch)}`
+      const contentUrl = `${base}/repos/${repo}/contents/${encodePath(f.path)}?ref=${encodeURIComponent(branch)}`
       try {
         const cRes = await fetch(contentUrl, { headers: authHeaders(config.token) })
         if (!cRes.ok) continue
@@ -254,7 +280,7 @@ export async function fetchGiteeFileContent(
     const base = apiBase(config)
     const branchResult = await resolveBranch(config)
     const branch = branchResult.branch
-    const url = `${base}/repos/${encodeURIComponent(config.repo)}/contents/${encodePath(remotePath)}?ref=${encodeURIComponent(branch)}`
+    const url = `${base}/repos/${await repoPath(config)}/contents/${encodePath(remotePath)}?ref=${encodeURIComponent(branch)}`
     const res = await fetch(url, { headers: authHeaders(config.token) })
     if (!res.ok) return null
     const data = await res.json()
