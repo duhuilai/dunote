@@ -91,10 +91,18 @@ const commandItems: SlashCommandItem[] = [
   },
   {
     title: '表格',
-    description: '插入 3×3 表格',
+    description: '插入 3×3 普通表格',
     icon: Table,
     command: ({ editor, range }) => {
       editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+    },
+  },
+  {
+    title: '智能表格',
+    description: '带字段类型的表格（单选/多选/数字/日期/评分…）',
+    icon: Table,
+    command: ({ editor, range }) => {
+      editor.chain().focus().deleteRange(range).insertDataTable().run()
     },
   },
   {
