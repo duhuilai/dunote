@@ -20,6 +20,7 @@
     "fs:allow-copy-file",
     "fs:allow-write-file",
     "shell:allow-open",
+    "process:allow-exit",
     "http:default",
     {
       "identifier": "http:allow-fetch",
