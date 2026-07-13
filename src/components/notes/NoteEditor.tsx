@@ -62,6 +62,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const baselineContentRef = useRef<string>(note.content || '')
+  const lastEmittedRef = useRef<string>('') // 记录编辑器最近一次输出的 HTML，用于区分“自编辑”与“外部内容变更”
   const editorRef = useRef<Editor | null>(null)
 
   const editor = useEditor({
@@ -131,6 +132,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       }
       saveTimeoutRef.current = setTimeout(async () => {
         const content = editor.getHTML()
+        // 记录编辑器本次产出的 HTML，供下方 effect 判断是否为自编辑（自编辑不回灌 setContent）
+        lastEmittedRef.current = content
         // Only save if content actually changed from the baseline (last loaded/saved content)
         if (content !== baselineContentRef.current) {
           // Update note in store
@@ -166,11 +169,20 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   }, [])
 
   useEffect(() => {
-    if (editor && note.content !== editor.getHTML()) {
+    if (!editor) return
+    // 自编辑产生的内容变更（note.content 已通过 onUpdate 上报过），
+    // 此时编辑器里的 DOM 就是最新内容，若再 setContent 会把光标重置到开头，
+    // 表现为“中文输入后光标跳到第一个字前面”。因此直接跳过，仅同步 baseline。
+    if (note.content === lastEmittedRef.current) {
+      baselineContentRef.current = note.content || ''
+      return
+    }
+    if (editor.getHTML() !== note.content) {
       console.log(`[NoteEditor] Syncing content for note ${note.id}, content length: ${note.content?.length || 0}`)
       // Update baseline BEFORE setContent to prevent onUpdate auto-save from triggering
       baselineContentRef.current = note.content || ''
       editor.commands.setContent(note.content)
+      lastEmittedRef.current = note.content || ''
       console.log(`[NoteEditor] Content set and baseline updated`)
     }
   }, [note.id, note.content])
