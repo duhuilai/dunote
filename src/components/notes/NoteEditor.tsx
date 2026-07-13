@@ -8,8 +8,7 @@ import Image from '@tiptap/extension-image'
 import Link from '@tiptap/extension-link'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
-import { Table } from '@tiptap/extension-table'
-import TableRow from '@tiptap/extension-table-row'
+import { SmartTable, SmartTableRow, COL_TYPES, getActiveColumnIndex, type ColType } from '@/extensions/tableSmart'
 import TableCell from '@tiptap/extension-table-cell'
 import TableHeader from '@tiptap/extension-table-header'
 import { TextStyle } from '@tiptap/extension-text-style'
@@ -78,8 +77,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       Link.configure({ openOnClick: false }),
       TaskList,
       TaskItem.configure({ nested: true }),
-      Table.configure({ resizable: true }),
-      TableRow,
+      SmartTable.configure({ resizable: true }),
+      SmartTableRow,
       TableCell,
       TableHeader,
       TextStyle,
@@ -433,6 +432,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   const [showTableContextMenu, setShowTableContextMenu] = useState(false)
   const [tableContextMenuPos, setTableContextMenuPos] = useState({ x: 0, y: 0 })
   const tableContextMenuRef = useRef<HTMLDivElement>(null)
+  const [filterValue, setFilterValue] = useState('')
 
   // Insert row/column dropdown menu
   const [showInsertMenu, setShowInsertMenu] = useState(false)
@@ -545,6 +545,113 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       }}
     />
   )
+
+  const renderSmartControls = () => {
+    const activeCol = getActiveColumnIndex(editor.state)
+    const colTypes = ((editor.getAttributes('table').colTypes as ColType[] | undefined) || [])
+    const colLabel = activeCol === null ? '（先把光标放到要操作的列）' : `操作列：第 ${activeCol + 1} 列`
+
+    // 统计摘要（读取渲染后的 DOM，跳过被筛选隐藏的行）
+    const tableEl = editor.view.dom.querySelector('table')
+    let visibleRows = 0
+    const sums: Record<number, number> = {}
+    if (tableEl) {
+      const rows = Array.from(tableEl.querySelectorAll('tr'))
+      rows.forEach((tr, i) => {
+        if (i === 0) return
+        if (tr.getAttribute('data-hidden') === 'true') return
+        visibleRows++
+        tr.querySelectorAll('td, th').forEach((cell, ci) => {
+          if (colTypes[ci] === 'number') {
+            const n = parseFloat((cell.textContent || '').trim())
+            if (!isNaN(n)) sums[ci] = (sums[ci] || 0) + n
+          }
+        })
+      })
+    }
+    const sumText = Object.keys(sums).map((ci) => `第${Number(ci) + 1}列合计 ${sums[Number(ci)]}`).join('，')
+
+    const btnStyle = (active = false): React.CSSProperties => ({
+      padding: '5px 9px',
+      borderRadius: '6px',
+      border: active ? `1px solid ${C.primary}` : `1px solid ${C.border}`,
+      background: active ? C.primaryLight : C.surface,
+      color: active ? C.primary : C.textSecondary,
+      fontSize: '12px',
+      cursor: activeCol === null ? 'not-allowed' : 'pointer',
+      fontFamily: 'inherit',
+      opacity: activeCol === null ? 0.5 : 1,
+    })
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div style={{ fontSize: '11px', color: C.textMuted }}>{colLabel}</div>
+
+        {/* 列类型 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '11px', color: C.textMuted }}>类型：</span>
+          {COL_TYPES.map((t) => (
+            <button
+              key={t.value}
+              disabled={activeCol === null}
+              onClick={() => editor.chain().focus().setTableColType({ col: activeCol as number, type: t.value }).run()}
+              style={btnStyle(colTypes[activeCol as number] === t.value)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* 排序 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '11px', color: C.textMuted }}>排序：</span>
+          <button
+            disabled={activeCol === null}
+            onClick={() => editor.chain().focus().sortTableByColumn({ col: activeCol as number, dir: 'asc' }).run()}
+            style={btnStyle()}
+          >
+            升序 ↑
+          </button>
+          <button
+            disabled={activeCol === null}
+            onClick={() => editor.chain().focus().sortTableByColumn({ col: activeCol as number, dir: 'desc' }).run()}
+            style={btnStyle()}
+          >
+            降序 ↓
+          </button>
+        </div>
+
+        {/* 筛选 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '11px', color: C.textMuted }}>筛选：</span>
+          <input
+            value={filterValue}
+            onChange={(e) => setFilterValue(e.target.value)}
+            placeholder="按该列内容包含匹配"
+            style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '6px', border: `1px solid ${C.border}`, fontFamily: 'inherit', outline: 'none', width: '150px' }}
+          />
+          <button
+            disabled={activeCol === null}
+            onClick={() => editor.chain().focus().filterTableByColumn({ col: activeCol as number, value: filterValue }).run()}
+            style={btnStyle()}
+          >
+            应用
+          </button>
+          <button
+            onClick={() => { setFilterValue(''); editor.chain().focus().clearTableFilter().run() }}
+            style={btnStyle()}
+          >
+            清除
+          </button>
+        </div>
+
+        {/* 统计摘要 */}
+        <div style={{ fontSize: '11px', color: C.textSecondary }}>
+          可见数据行：{visibleRows}{sumText ? `　·　${sumText}` : ''}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -1407,7 +1514,10 @@ export default function NoteEditor({ note }: NoteEditorProps) {
               </div>
             )}
           </div>
+        <div style={{ padding: '8px 6px 4px', borderTop: `1px solid ${C.border}`, marginTop: '2px' }}>
+          {renderSmartControls()}
         </div>
+      </div>
       )}
 
       {/* Text Selection Floating Toolbar */}

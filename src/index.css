@@ -103,6 +103,8 @@ input, select, textarea { font-family: inherit; }
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
 }
+/* 智能表格：筛选隐藏的行 */
+.tiptap table tr[data-hidden="true"] { display: none; }
 .tiptap .selectedCell { background: rgba(37, 99, 235, 0.08); }
 .tiptap table .column-resize-handle {
   position: absolute;
