@@ -58,6 +58,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   const { updateNote, addHistoryEntry, setShowHistory, settings, showToast, mergeRemoteHistory, localRootFolder, appVersion } = useAppStore()
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [isCreatingHistory, setIsCreatingHistory] = useState(false)
+  const creatingHistoryRef = useRef(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const baselineContentRef = useRef<string>(note.content || '')
@@ -185,7 +186,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
 
   // Manual history creation
   const handleCreateHistory = async () => {
-    if (isCreatingHistory) return
+    if (creatingHistoryRef.current) return
+    creatingHistoryRef.current = true
     setIsCreatingHistory(true)
     try {
       const syncConfig = settings.syncConfig
@@ -233,6 +235,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         showToast(result.message || '生成失败，请检查 Gitee 配置或网络', 'error')
       }
     } finally {
+      creatingHistoryRef.current = false
       setIsCreatingHistory(false)
     }
   }

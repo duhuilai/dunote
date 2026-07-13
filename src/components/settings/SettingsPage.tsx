@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store'
-import { Globe, RefreshCw, Palette, Save, Check, TestTube, Download, ExternalLink, Info } from 'lucide-react'
+import { Globe, RefreshCw, Save, Check, TestTube, Download, ExternalLink, Info } from 'lucide-react'
 import { testGiteeConnection } from '@/utils/sync'
 import { checkForUpdate, openReleasePage } from '@/utils/update'
 import UpdateDownloader from '@/components/update/UpdateDownloader'
@@ -12,7 +12,6 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [testMsg, setTestMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [testing, setTesting] = useState(false)
-  const [newColor, setNewColor] = useState({ name: '', color: '#2563EB' })
 
   // 更新相关
   const appVersion = useAppStore((s) => s.appVersion)
@@ -52,20 +51,6 @@ export default function SettingsPage() {
     updateSettings({ syncConfig: syncForm })
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }
-
-  const handleAddColor = () => {
-    if (!newColor.name) return
-    updateSettings({
-      customColors: { ...settings.customColors, [newColor.name]: newColor.color },
-    })
-    setNewColor({ name: '', color: '#2563EB' })
-  }
-
-  const handleRemoveColor = (key: string) => {
-    const colors = { ...settings.customColors }
-    delete colors[key]
-    updateSettings({ customColors: colors })
   }
 
   const inputStyle: React.CSSProperties = {
@@ -267,50 +252,6 @@ export default function SettingsPage() {
                   </button>
                 )
               })}
-            </div>
-          </div>
-        </div>
-
-        {/* Custom Colors */}
-        <div style={sectionCardStyle}>
-          <div style={sectionHeaderStyle}>
-            <Palette size={16} style={{ color: '#2563EB' }} />
-            <h3 style={sectionTitleStyle}>自定义类型字体颜色</h3>
-          </div>
-          <div style={{ padding: '20px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '16px' }}>
-              {Object.entries(settings.customColors).map(([name, color]) => (
-                <div key={name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', borderRadius: '8px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
-                  <div style={{ width: '24px', height: '24px', borderRadius: '6px', flexShrink: 0, background: color }} />
-                  <span style={{ fontSize: '12px', color: '#1E293B', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-                  <button
-                    onClick={() => handleRemoveColor(name)}
-                    style={{ fontSize: '11px', color: '#94A3B8', cursor: 'pointer', border: 'none', background: 'transparent', fontFamily: 'inherit', padding: '2px 4px' }}
-                  >
-                    移除
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <input
-                value={newColor.name}
-                onChange={(e) => setNewColor({ ...newColor, name: e.target.value })}
-                style={{ ...inputStyle, flex: 1 }}
-                placeholder="类型名称"
-              />
-              <input
-                type="color"
-                value={newColor.color}
-                onChange={(e) => setNewColor({ ...newColor, color: e.target.value })}
-                style={{ width: '40px', height: '40px', borderRadius: '8px', border: '1px solid #E2E8F0', cursor: 'pointer', padding: '2px' }}
-              />
-              <button
-                onClick={handleAddColor}
-                style={{ padding: '8px 16px', borderRadius: '8px', background: '#2563EB', color: '#FFFFFF', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
-              >
-                添加
-              </button>
             </div>
           </div>
         </div>

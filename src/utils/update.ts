@@ -2,6 +2,7 @@ import { open } from '@tauri-apps/plugin-shell'
 import { fetch } from '@tauri-apps/plugin-http'
 import { writeFile, mkdir, exists } from '@tauri-apps/plugin-fs'
 import { appConfigDir, join } from '@tauri-apps/api/path'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 const REPO = 'duhuilai/dunote'
 const RELEASE_API = `https://api.github.com/repos/${REPO}/releases/latest`
@@ -211,11 +212,19 @@ export async function downloadUpdate(
 
 /**
  * 用系统关联程序打开已下载的安装包（Windows 启动 exe/msi 安装向导，macOS 挂载 dmg）。
+ * 打开前会先关闭当前应用窗口，避免 Windows 安装程序提示需要先关闭旧实例。
  */
 export async function openInstaller(
   filePath: string,
 ): Promise<{ ok: boolean; message: string }> {
   try {
+    // 先关闭当前窗口，让安装包可以无阻塞启动
+    const win = getCurrentWebviewWindow()
+    try {
+      await win.close()
+    } catch {
+      // 即使关闭失败也继续尝试打开安装包
+    }
     await open(filePath)
     return { ok: true, message: '正在启动安装程序…' }
   } catch (e: any) {

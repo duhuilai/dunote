@@ -66,8 +66,8 @@ input, select, textarea { font-family: inherit; }
 .tiptap ol ul { list-style-type: circle; }
 .tiptap blockquote { border-left: 3px solid var(--color-primary); padding-left: 1em; margin: 0.5em 0; color: var(--color-text-secondary); }
 .tiptap code { background: #F1F5F9; border-radius: 4px; padding: 2px 6px; font-size: 0.9em; color: var(--color-danger); }
-.tiptap pre { background: #1E293B; color: #E2E8F0; border-radius: 8px; padding: 12px 16px; margin: 0.5em 0; overflow-x: auto; }
-.tiptap pre code { background: transparent; color: inherit; padding: 0; }
+.tiptap pre { background: #F1F5F9; color: #1E293B; border-radius: 8px; padding: 12px 16px; margin: 0.5em 0; overflow-x: auto; }
+.tiptap pre code { background: transparent; color: #334155; padding: 0; }
 .tiptap img { max-width: 100%; border-radius: 8px; margin: 0.5em 0; }
 .tiptap a { color: var(--color-primary); text-decoration: underline; }
 .tiptap hr { border: none; border-top: 1px solid var(--color-border); margin: 1em 0; }
@@ -156,8 +156,8 @@ input, select, textarea { font-family: inherit; }
 .tiptap-preview ol ul { list-style-type: circle; }
 .tiptap-preview blockquote { border-left: 3px solid var(--color-primary); padding-left: 1em; margin: 0.5em 0; color: var(--color-text-secondary); }
 .tiptap-preview code { background: #F1F5F9; border-radius: 4px; padding: 2px 6px; font-size: 0.9em; color: var(--color-danger); }
-.tiptap-preview pre { background: #1E293B; color: #E2E8F0; border-radius: 8px; padding: 12px 16px; margin: 0.5em 0; overflow-x: auto; }
-.tiptap-preview pre code { background: transparent; color: inherit; padding: 0; }
+.tiptap-preview pre { background: #F1F5F9; color: #1E293B; border-radius: 8px; padding: 12px 16px; margin: 0.5em 0; overflow-x: auto; }
+.tiptap-preview pre code { background: transparent; color: #334155; padding: 0; }
 .tiptap-preview img { max-width: 100%; border-radius: 8px; margin: 0.5em 0; }
 .tiptap-preview a { color: var(--color-primary); text-decoration: underline; }
 .tiptap-preview hr { border: none; border-top: 1px solid var(--color-border); margin: 1em 0; }
