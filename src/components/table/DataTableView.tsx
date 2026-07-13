@@ -1,8 +1,8 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Plus, Trash2, X, ArrowUp, ArrowDown, Filter, ArrowUpDown,
-  BarChart3, ChevronDown, MoreHorizontal, Pencil, Check,
+  Plus, Trash2, X, ArrowUpDown, Filter, ArrowUp, ArrowDown,
+  BarChart3, MoreHorizontal, GripVertical,
 } from 'lucide-react'
 import {
   type Column, type Row, type FieldType, type SelectOption, type CellValue,
@@ -22,26 +22,53 @@ const C = {
   danger: '#EF4444',
 }
 
+const MIN_COL_WIDTH = 80
+const ACTION_COL_WIDTH = 36
+const DEFAULT_COL_WIDTH = 160
+
 type SortState = { colId: string; dir: 'asc' | 'desc' } | null
 type FilterMode = 'contains' | 'equals' | 'empty'
 type FilterState = { colId: string; mode: FilterMode; value: string }
-type PopoverKey = string | null
 
-export function DataTableView({ node, updateAttributes, editor }: NodeViewProps) {
+export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   const columns: Column[] = (node.attrs.columns as Column[]) || []
   const rows: Row[] = (node.attrs.rows as Row[]) || []
 
-  // 视图态（不持久化）
   const [sort, setSort] = useState<SortState>(null)
   const [filters, setFilters] = useState<FilterState[]>([])
-  const [colMenu, setColMenu] = useState<PopoverKey>(null) // 列设置菜单
-  const [optEditor, setOptEditor] = useState<PopoverKey>(null) // 选项编辑
-  const [multiOpen, setMultiOpen] = useState<PopoverKey>(null) // 多选/人员下拉
+  const [colMenu, setColMenu] = useState<string | null>(null)
+  const [optEditor, setOptEditor] = useState<string | null>(null)
+  const [multiOpen, setMultiOpen] = useState<string | null>(null)
   const [toolPop, setToolPop] = useState<'sort' | 'filter' | null>(null)
+
+  const tableWrapRef = useRef<HTMLDivElement>(null)
+
+  /* ── 点击外部关闭下拉 ── */
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (!tableWrapRef.current) return
+      if (!tableWrapRef.current.contains(e.target as Node)) {
+        setColMenu(null)
+        setOptEditor(null)
+        setMultiOpen(null)
+        setToolPop(null)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [])
 
   /* ── 持久化提交 ── */
   const commit = (nextCols: Column[], nextRows: Row[]) =>
     updateAttributes({ columns: nextCols, rows: nextRows })
+
+  /* ── 列宽 ── */
+  const setColWidth = (colId: string, width: number) => {
+    commit(
+      columns.map((c) => (c.id === colId ? { ...c, width: Math.max(MIN_COL_WIDTH, width) } : c)),
+      rows,
+    )
+  }
 
   /* ── 单元格读写 ── */
   const getCell = (row: Row, colId: string): CellValue =>
@@ -69,7 +96,13 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
   }
 
   const addColumn = () => {
-    const col: Column = { id: uid('col'), name: `列${columns.length + 1}`, type: 'text', options: [] }
+    const col: Column = {
+      id: uid('col'),
+      name: `列${columns.length + 1}`,
+      type: 'text',
+      options: [],
+      width: DEFAULT_COL_WIDTH,
+    }
     const nextCols = [...columns, col]
     const nextRows = rows.map((r) => ({
       ...r,
@@ -107,7 +140,6 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
         : c.options
       return { ...c, type, options }
     })
-    // 切换类型时按新类型重置该列值
     const nextRows = rows.map((r) => ({
       ...r,
       cells: { ...r.cells, [colId]: emptyValueFor(type) },
@@ -126,7 +158,6 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
   /* ── 显示行（排序 + 筛选） ── */
   const displayRows = useMemo(() => {
     let list = rows.slice()
-    // 筛选
     filters.forEach((f) => {
       if (!f.colId) return
       const t = colType(f.colId)
@@ -142,7 +173,6 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
         return s.toLowerCase().includes(f.value.toLowerCase())
       })
     })
-    // 排序
     if (sort) {
       const t = colType(sort.colId)
       list = list.slice().sort((a, b) => {
@@ -189,6 +219,32 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
 
   const hasActiveView = sort !== null || filters.length > 0
 
+  /* ── 列宽拖拽 ── */
+  const resizing = useRef<{ colId: string; startX: number; startW: number } | null>(null)
+  const onResizeStart = (e: React.MouseEvent, colId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const col = columns.find((c) => c.id === colId)
+    resizing.current = { colId, startX: e.clientX, startW: col?.width ?? DEFAULT_COL_WIDTH }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    function onMove(ev: MouseEvent) {
+      const r = resizing.current
+      if (!r) return
+      const w = r.startW + (ev.clientX - r.startX)
+      setColWidth(r.colId, w)
+    }
+    function onUp() {
+      resizing.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+
   return (
     <NodeViewWrapper
       className="du-data-table"
@@ -216,8 +272,8 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
             background: C.bg,
           }}
         >
-          <ToolBtn onClick={addRow} icon={<Plus size={14} />} label="行" title="在末尾添加一行" />
-          <ToolBtn onClick={addColumn} icon={<Plus size={14} />} label="列" title="在末尾添加一列" />
+          <ToolBtn onClick={addRow} icon={<Plus size={14} />} label="行" />
+          <ToolBtn onClick={addColumn} icon={<Plus size={14} />} label="列" />
           <div style={{ width: '1px', height: '20px', background: C.border, margin: '0 2px' }} />
 
           {/* 排序 */}
@@ -231,27 +287,37 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
             {toolPop === 'sort' && (
               <Popover onClose={() => setToolPop(null)}>
                 <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: '6px' }}>按列排序</div>
-                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <select
-                    value={sort?.colId ?? ''}
-                    onChange={(e) => {
-                      const colId = e.target.value
-                      if (!colId) { setSort(null); return }
-                      const dir = sort?.dir ?? 'asc'
-                      setSort({ colId, dir })
-                    }}
-                    style={selStyle}
-                  >
-                    <option value="">选择列…</option>
-                    {columns.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  <button style={miniBtn} disabled={!sort} onClick={() => setSort((s) => s ? { ...s, dir: 'asc' } : s)}>升序 ↑</button>
-                  <button style={miniBtn} disabled={!sort} onClick={() => setSort((s) => s ? { ...s, dir: 'desc' } : s)}>降序 ↓</button>
-                </div>
+                <select
+                  value={sort?.colId ?? ''}
+                  onChange={(e) => {
+                    const colId = e.target.value
+                    if (!colId) { setSort(null); return }
+                    const dir = sort?.colId === colId ? (sort.dir === 'asc' ? 'desc' : 'asc') : 'asc'
+                    setSort({ colId, dir })
+                  }}
+                  style={selStyle}
+                >
+                  <option value="">选择列…</option>
+                  {columns.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
                 {sort && (
-                  <button style={{ ...miniBtn, marginTop: '6px' }} onClick={() => setSort(null)}>清除排序</button>
+                  <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
+                    <button
+                      style={{ ...miniBtn, background: sort.dir === 'asc' ? C.primaryLight : C.surface, color: sort.dir === 'asc' ? C.primary : C.text }}
+                      onClick={() => setSort({ ...sort, dir: 'asc' })}
+                    >
+                      <ArrowUp size={12} /> 升序
+                    </button>
+                    <button
+                      style={{ ...miniBtn, background: sort.dir === 'desc' ? C.primaryLight : C.surface, color: sort.dir === 'desc' ? C.primary : C.text }}
+                      onClick={() => setSort({ ...sort, dir: 'desc' })}
+                    >
+                      <ArrowDown size={12} /> 降序
+                    </button>
+                    <button style={miniBtn} onClick={() => setSort(null)}>清除</button>
+                  </div>
                 )}
               </Popover>
             )}
@@ -288,7 +354,9 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
                         style={{ ...inputStyle, width: '90px' }}
                       />
                     )}
-                    <button style={miniBtn} onClick={() => setFilters((arr) => arr.filter((_, j) => j !== i))}>✕</button>
+                    <button style={miniBtn} onClick={() => setFilters((arr) => arr.filter((_, j) => j !== i))}>
+                      <X size={12} />
+                    </button>
                   </div>
                 ))}
                 <button style={miniBtn} onClick={() => setFilters((arr) => [...arr, { colId: columns[0]?.id ?? '', mode: 'contains', value: '' }])}>
@@ -307,130 +375,165 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
           )}
         </div>
 
-        {/* ── 表格 ── */}
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '13px' }}>
-            <thead>
+        {/* ── 表格（固定表头） ── */}
+        <div
+          ref={tableWrapRef}
+          style={{
+            overflow: 'auto',
+            maxHeight: 'min(60vh, 520px)',
+          }}
+        >
+          <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: '13px' }}>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
               <tr>
+                {/* 行序号/操作列 */}
+                <th
+                  style={{
+                    width: ACTION_COL_WIDTH,
+                    minWidth: ACTION_COL_WIDTH,
+                    maxWidth: ACTION_COL_WIDTH,
+                    background: C.bg,
+                    borderBottom: `2px solid ${C.border}`,
+                    borderRight: `1px solid ${C.border}`,
+                    padding: 0,
+                    position: 'sticky',
+                    left: 0,
+                    zIndex: 11,
+                  }}
+                />
                 {columns.map((c) => (
                   <th
                     key={c.id}
                     style={{
+                      width: c.width ?? DEFAULT_COL_WIDTH,
+                      minWidth: c.width ?? DEFAULT_COL_WIDTH,
+                      maxWidth: c.width ?? DEFAULT_COL_WIDTH,
+                      background: C.bg,
                       borderBottom: `2px solid ${C.border}`,
                       borderRight: `1px solid ${C.border}`,
-                      padding: '0',
+                      padding: 0,
                       textAlign: 'left',
-                      background: C.bg,
-                      minWidth: '140px',
                       position: 'relative',
+                      overflow: 'hidden',
+                      whiteSpace: 'nowrap',
                     }}
                   >
-                    <div style={{ padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <input
-                          value={c.name}
-                          onChange={(e) => renameColumn(c.id, e.target.value)}
-                          style={{
-                            ...inputStyle,
-                            fontWeight: 600,
-                            border: 'none',
-                            background: 'transparent',
-                            padding: '2px 2px',
-                            width: '100%',
-                          }}
-                        />
-                        <button
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => { setColMenu(colMenu === c.id ? null : c.id); setOptEditor(null) }}
-                          title="列设置"
-                          style={iconBtn}
-                        >
-                          <MoreHorizontal size={14} />
-                        </button>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={typeBadge(c.type)} onClick={() => { setColMenu(colMenu === c.id ? null : c.id); setOptEditor(null) }}>
-                          {FIELD_TYPES.find((t) => t.value === c.type)?.label}
-                        </span>
-                        {(c.type === 'select' || c.type === 'multiSelect' || c.type === 'person') && (
-                          <button
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => { setOptEditor(optEditor === c.id ? null : c.id); setColMenu(null) }}
-                            title="管理选项"
-                            style={{ ...miniBtn, padding: '2px 6px' }}
-                          >
-                            选项 {c.options.length}
-                          </button>
-                        )}
-                      </div>
+                    <div style={{ display: 'flex', alignItems: 'center', height: '38px', padding: '0 8px', gap: '4px' }}>
+                      <input
+                        value={c.name}
+                        onChange={(e) => renameColumn(c.id, e.target.value)}
+                        style={{
+                          ...inputStyle,
+                          fontWeight: 600,
+                          border: 'none',
+                          background: 'transparent',
+                          padding: '2px 2px',
+                          flex: 1,
+                          minWidth: 40,
+                        }}
+                        title={c.name}
+                      />
+                      <button
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          const open = colMenu === c.id
+                          setColMenu(open ? null : c.id)
+                          setOptEditor(null)
+                          setMultiOpen(null)
+                        }}
+                        title="列设置"
+                        style={iconBtn}
+                      >
+                        <MoreHorizontal size={14} />
+                      </button>
                     </div>
 
-                    {/* 列设置菜单 */}
+                    {/* 列宽拖拽条 */}
+                    <div
+                      className="du-table-resize"
+                      onMouseDown={(e) => onResizeStart(e, c.id)}
+                    />
+
+                    {/* 列设置菜单（列名/类型/选项/删除） */}
                     {colMenu === c.id && (
                       <Popover onClose={() => setColMenu(null)}>
-                        <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: '4px' }}>字段类型</div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
-                          {FIELD_TYPES.map((t) => (
-                            <button
-                              key={t.value}
-                              style={{
-                                ...miniBtn,
-                                background: c.type === t.value ? C.primaryLight : C.surface,
-                                color: c.type === t.value ? C.primary : C.text,
-                                border: `1px solid ${c.type === t.value ? C.primary : C.border}`,
-                              }}
-                              onClick={() => changeColumnType(c.id, t.value)}
-                            >
-                              {t.label}
-                            </button>
-                          ))}
-                        </div>
-                        <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
-                          {(c.type === 'select' || c.type === 'multiSelect' || c.type === 'person') && (
-                            <button style={miniBtn} onClick={() => { setOptEditor(c.id); setColMenu(null) }}>管理选项</button>
-                          )}
-                          <button style={{ ...miniBtn, color: C.danger }} onClick={() => deleteColumn(c.id)}>删除列</button>
-                        </div>
+                        <ColMenuContent
+                          col={c}
+                          onRename={(n) => renameColumn(c.id, n)}
+                          onChangeType={(t) => changeColumnType(c.id, t)}
+                          onManageOptions={() => { setOptEditor(c.id); setColMenu(null) }}
+                          onDelete={() => deleteColumn(c.id)}
+                        />
                       </Popover>
                     )}
 
                     {/* 选项编辑 */}
                     {optEditor === c.id && (
                       <Popover onClose={() => setOptEditor(null)}>
-                        <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: '6px' }}>选项（标签 / 颜色）</div>
-                        {c.options.map((o, i) => (
-                          <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
-                            <input
-                              value={o.label}
-                              onChange={(e) => updateOption(c.id, i, { ...o, label: e.target.value })}
-                              style={inputStyle}
-                            />
-                            <input
-                              type="color"
-                              value={o.color}
-                              onChange={(e) => updateOption(c.id, i, { ...o, color: e.target.value })}
-                              style={{ width: '24px', height: '24px', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
-                            />
-                            <button style={miniBtn} onClick={() => removeOption(c.id, i)}>✕</button>
-                          </div>
-                        ))}
-                        <button style={miniBtn} onClick={() => addOption(c.id)}>+ 添加选项</button>
+                        <OptionEditor
+                          col={c}
+                          onChange={(opts) => setColumnOptions(c.id, opts)}
+                          onClose={() => setOptEditor(null)}
+                        />
                       </Popover>
                     )}
                   </th>
                 ))}
                 {columns.length === 0 && (
-                  <th style={{ padding: '8px', color: C.textMuted }}>暂无列，点击「+ 列」添加</th>
+                  <th style={{ padding: '10px', color: C.textMuted, background: C.bg, borderBottom: `2px solid ${C.border}` }}>
+                    暂无列，点击「+ 列」添加
+                  </th>
                 )}
               </tr>
             </thead>
             <tbody>
-              {displayRows.map((r) => (
-                <tr key={r.id} style={{ position: 'relative' }}>
+              {displayRows.map((r, idx) => (
+                <tr key={r.id}>
+                  {/* 行操作 */}
+                  <td
+                    style={{
+                      width: ACTION_COL_WIDTH,
+                      minWidth: ACTION_COL_WIDTH,
+                      maxWidth: ACTION_COL_WIDTH,
+                      borderBottom: `1px solid ${C.border}`,
+                      borderRight: `1px solid ${C.border}`,
+                      textAlign: 'center',
+                      background: C.surface,
+                      position: 'sticky',
+                      left: 0,
+                      zIndex: 1,
+                      padding: 0,
+                    }}
+                    className="du-table-action-cell"
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                      <span className="du-table-row-num" style={{ fontSize: '11px', color: C.textMuted, width: '18px', textAlign: 'center' }}>
+                        {idx + 1}
+                      </span>
+                      <button
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => deleteRow(r.id)}
+                        title="删除此行"
+                        className="du-table-row-del"
+                        style={{
+                          ...iconBtn,
+                          opacity: 0,
+                          color: C.danger,
+                          padding: '2px',
+                          transition: 'opacity 0.15s',
+                        }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </td>
                   {columns.map((c) => (
                     <td
                       key={c.id}
                       style={{
+                        width: c.width ?? DEFAULT_COL_WIDTH,
+                        minWidth: c.width ?? DEFAULT_COL_WIDTH,
+                        maxWidth: c.width ?? DEFAULT_COL_WIDTH,
                         borderBottom: `1px solid ${C.border}`,
                         borderRight: `1px solid ${C.border}`,
                         padding: '4px 6px',
@@ -447,23 +550,14 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
                       />
                     </td>
                   ))}
-                  {columns.length > 0 && (
-                    <td style={{ width: '28px', borderBottom: `1px solid ${C.border}`, textAlign: 'center' }}>
-                      <button
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => deleteRow(r.id)}
-                        title="删除此行"
-                        style={{ ...iconBtn, opacity: 0.5 }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </td>
-                  )}
                 </tr>
               ))}
               {displayRows.length === 0 && (
                 <tr>
-                  <td colSpan={Math.max(columns.length, 1)} style={{ padding: '10px', textAlign: 'center', color: C.textMuted, fontSize: '12px' }}>
+                  <td
+                    colSpan={columns.length + 1}
+                    style={{ padding: '14px', textAlign: 'center', color: C.textMuted, fontSize: '12px', borderBottom: `1px solid ${C.border}` }}
+                  >
                     {rows.length === 0 ? '暂无数据，点击「+ 行」添加' : '没有符合筛选条件的数据'}
                   </td>
                 </tr>
@@ -518,27 +612,111 @@ export function DataTableView({ node, updateAttributes, editor }: NodeViewProps)
     </NodeViewWrapper>
   )
 
-  /* ── 局部辅助（在组件内以便访问 state） ── */
+  /* ── 局部辅助 ── */
   function updateFilter(i: number, f: FilterState) {
     setFilters((arr) => arr.map((x, j) => (j === i ? f : x)))
   }
-  function updateOption(colId: string, i: number, o: SelectOption) {
-    const col = columns.find((c) => c.id === colId)
-    if (!col) return
-    const options = col.options.map((x, j) => (j === i ? o : x))
-    setColumnOptions(colId, options)
-  }
-  function removeOption(colId: string, i: number) {
-    const col = columns.find((c) => c.id === colId)
-    if (!col) return
-    setColumnOptions(colId, col.options.filter((_, j) => j !== i))
-  }
-  function addOption(colId: string) {
-    const col = columns.find((c) => c.id === colId)
-    if (!col) return
-    const color = OPTION_COLORS[col.options.length % OPTION_COLORS.length]
-    setColumnOptions(colId, [...col.options, { id: uid('opt'), label: `选项${col.options.length + 1}`, color }])
-  }
+}
+
+/* ─── 列设置菜单内容 ─── */
+function ColMenuContent({
+  col,
+  onRename,
+  onChangeType,
+  onManageOptions,
+  onDelete,
+}: {
+  col: Column
+  onRename: (n: string) => void
+  onChangeType: (t: FieldType) => void
+  onManageOptions: () => void
+  onDelete: () => void
+}) {
+  const [name, setName] = useState(col.name)
+  return (
+    <div style={{ minWidth: 220 }}>
+      <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: '4px' }}>列名</div>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => onRename(name)}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur() }}
+        style={{ ...inputStyle, border: `1px solid ${C.border}`, borderRadius: '6px', padding: '5px 7px', width: '100%', marginBottom: '8px' }}
+      />
+
+      <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: '4px' }}>字段类型</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px', marginBottom: '8px' }}>
+        {FIELD_TYPES.map((t) => (
+          <button
+            key={t.value}
+            style={{
+              ...miniBtn,
+              background: col.type === t.value ? C.primaryLight : C.surface,
+              color: col.type === t.value ? C.primary : C.text,
+              border: `1px solid ${col.type === t.value ? C.primary : C.border}`,
+              justifyContent: 'center',
+            }}
+            onClick={() => onChangeType(t.value)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: '6px' }}>
+        {(col.type === 'select' || col.type === 'multiSelect' || col.type === 'person') && (
+          <button style={{ ...miniBtn, flex: 1 }} onClick={onManageOptions}>管理选项</button>
+        )}
+        <button style={{ ...miniBtn, color: C.danger, flex: 1 }} onClick={onDelete}>删除列</button>
+      </div>
+    </div>
+  )
+}
+
+/* ─── 选项编辑器 ─── */
+function OptionEditor({
+  col,
+  onChange,
+  onClose,
+}: {
+  col: Column
+  onChange: (opts: SelectOption[]) => void
+  onClose: () => void
+}) {
+  const [opts, setOpts] = useState<SelectOption[]>(col.options)
+  const commit = (next: SelectOption[]) => { setOpts(next); onChange(next) }
+  return (
+    <div style={{ minWidth: 220 }}>
+      <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: '6px' }}>选项（{col.name}）</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }}>
+        {opts.map((o, i) => (
+          <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <input
+              type="color"
+              value={o.color}
+              onChange={(e) => commit(opts.map((x, idx) => (idx === i ? { ...x, color: e.target.value } : x)))}
+              style={{ width: '22px', height: '22px', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
+            />
+            <input
+              value={o.label}
+              onChange={(e) => commit(opts.map((x, idx) => (idx === i ? { ...x, label: e.target.value } : x)))}
+              style={{ ...inputStyle, flex: 1, border: `1px solid ${C.border}`, borderRadius: '6px', padding: '4px 6px' }}
+            />
+            <button style={miniBtn} onClick={() => commit(opts.filter((_, idx) => idx !== i))}>
+              <X size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        style={{ ...miniBtn, width: '100%', marginTop: '6px' }}
+        onClick={() => commit([...opts, { id: uid('opt'), label: `选项${opts.length + 1}`, color: OPTION_COLORS[opts.length % OPTION_COLORS.length] }])}
+      >
+        + 添加选项
+      </button>
+      <button style={{ ...miniBtn, width: '100%', marginTop: '4px' }} onClick={onClose}>完成</button>
+    </div>
+  )
 }
 
 /* ─── 单元格编辑器 ─── */
@@ -748,6 +926,39 @@ function compareValues(a: CellValue, b: CellValue, t: FieldType): number {
   return cellToText(a, t).localeCompare(cellToText(b, t), 'zh-Hans-CN')
 }
 
+/* ─── Popover ─── */
+function Popover({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [onClose])
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'absolute',
+        top: '100%',
+        right: 0,
+        marginTop: '6px',
+        zIndex: 60,
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: '8px',
+        boxShadow: '0 6px 18px rgba(0,0,0,0.14)',
+        padding: '8px',
+        minWidth: '160px',
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>
+  )
+}
+
 /* ─── 样式辅助 ─── */
 const baseBtn = {
   display: 'inline-flex',
@@ -757,33 +968,30 @@ const baseBtn = {
   borderRadius: '6px',
   border: `1px solid ${C.border}`,
   background: C.surface,
+  color: C.text,
+  fontSize: '12px',
   cursor: 'pointer',
   fontFamily: 'inherit',
-  fontSize: '12px',
-  color: C.text,
-  transition: 'all 0.15s',
-} as const
+}
 
 function ToolBtn({
-  onClick, icon, label, active, danger, title,
+  onClick, icon, label, active, danger,
 }: {
   onClick: () => void
   icon: React.ReactNode
   label: string
   active?: boolean
   danger?: boolean
-  title?: string
 }) {
   return (
     <button
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
-      title={title}
       style={{
         ...baseBtn,
-        border: `1px solid ${active ? C.primary : C.border}`,
         background: active ? C.primaryLight : C.surface,
         color: danger ? C.danger : active ? C.primary : C.text,
+        borderColor: active ? C.primary : C.border,
       }}
     >
       {icon}
@@ -792,113 +1000,72 @@ function ToolBtn({
   )
 }
 
-function Popover({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div
-      onMouseDown={(e) => e.stopPropagation()}
-      style={{
-        position: 'absolute',
-        top: '100%',
-        left: 0,
-        marginTop: '4px',
-        zIndex: 60,
-        background: C.surface,
-        border: `1px solid ${C.border}`,
-        borderRadius: '8px',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.14)',
-        padding: '8px',
-        minWidth: '200px',
-      }}
-    >
-      {children}
-    </div>
-  )
+const miniBtn: React.CSSProperties = {
+  ...baseBtn,
+  padding: '3px 6px',
+  fontSize: '11px',
 }
 
-const miniBtn = {
-  ...baseBtn,
-  padding: '3px 8px',
-  fontSize: '11px',
-} as const
-
-const inputStyle = {
-  fontFamily: 'inherit',
-  fontSize: '13px',
-  padding: '4px 6px',
-  borderRadius: '6px',
-  border: `1px solid ${C.border}`,
-  outline: 'none',
-  color: C.text,
-} as const
-
-const cellInputStyle = {
-  ...inputStyle,
-  width: '100%',
-  boxSizing: 'border-box' as const,
-  background: 'transparent',
-  border: 'none',
-  padding: '2px 2px',
-} as const
-
-const selStyle = {
-  ...inputStyle,
-  background: C.surface,
-} as const
-
-const iconBtn = {
+const iconBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
   border: 'none',
   background: 'transparent',
   cursor: 'pointer',
   color: C.textSecondary,
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: '2px',
-  borderRadius: '4px',
-} as const
-
-function typeBadge(t: FieldType): React.CSSProperties {
-  return {
-    fontSize: '10px',
-    padding: '1px 6px',
-    borderRadius: '999px',
-    background: C.primaryLight,
-    color: C.primary,
-    cursor: 'pointer',
-    fontWeight: 500,
-  }
+  padding: '3px',
+  borderRadius: '5px',
 }
 
-function pillStyle(color?: string): React.CSSProperties {
-  return {
-    fontSize: '11px',
-    padding: '1px 7px',
-    borderRadius: '999px',
-    background: color ? hexToRgba(color, 0.15) : '#F1F5F9',
-    color: color || C.textSecondary,
-    fontWeight: 500,
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '2px',
-  }
+const inputStyle: React.CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  outline: 'none',
+  fontFamily: 'inherit',
+  fontSize: '13px',
+  color: C.text,
 }
 
-function cellSelectStyle(column: Column, value: string): React.CSSProperties {
-  const opt = column.options.find((o) => o.label === value)
+const cellInputStyle: React.CSSProperties = {
+  ...inputStyle,
+  width: '100%',
+  padding: '3px 2px',
+}
+
+const cellSelectStyle = (column: Column, value: string | undefined): React.CSSProperties => {
+  const opt = value ? column.options.find((o) => o.label === value) : undefined
   return {
     ...inputStyle,
     width: '100%',
-    background: opt ? hexToRgba(opt.color, 0.12) : C.surface,
-    border: `1px solid ${opt ? opt.color : C.border}`,
-    color: opt ? opt.color : C.text,
-    fontWeight: opt ? 600 : 400,
+    padding: '3px 2px',
+    color: opt?.color || C.text,
+    fontWeight: value ? 500 : 400,
+    cursor: 'pointer',
+    background: 'transparent',
   }
 }
 
-function hexToRgba(hex: string, alpha: number): string {
-  const h = hex.replace('#', '')
-  const r = parseInt(h.substring(0, 2), 16)
-  const g = parseInt(h.substring(2, 4), 16)
-  const b = parseInt(h.substring(4, 6), 16)
-  return `rgba(${r},${g},${b},${alpha})`
+const pillStyle = (color?: string): React.CSSProperties => ({
+  fontSize: '11px',
+  padding: '1px 6px',
+  borderRadius: '999px',
+  background: (color || C.textMuted) + '20',
+  color: color || C.textMuted,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '3px',
+  fontWeight: 500,
+})
+
+const selStyle: React.CSSProperties = {
+  fontSize: '12px',
+  padding: '4px 6px',
+  borderRadius: '6px',
+  border: `1px solid ${C.border}`,
+  background: C.surface,
+  color: C.text,
+  fontFamily: 'inherit',
+  cursor: 'pointer',
+  outline: 'none',
 }

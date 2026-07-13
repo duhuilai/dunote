@@ -197,3 +197,29 @@ input, select, textarea { font-family: inherit; }
   0% { margin-left: -40%; }
   100% { margin-left: 100%; }
 }
+
+/* ─── 智能表格（DataTable） ─── */
+.du-data-table tbody tr:hover .du-table-action-cell {
+  background: #F1F5F9;
+}
+.du-data-table tbody tr:hover .du-table-row-num {
+  display: none;
+}
+.du-data-table tbody tr:hover .du-table-row-del {
+  opacity: 1 !important;
+}
+.du-data-table tbody tr:hover .du-table-row-del:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+.du-data-table th .du-table-resize {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 12;
+}
+.du-data-table th .du-table-resize:hover {
+  background: rgba(37, 99, 235, 0.25);
+}
