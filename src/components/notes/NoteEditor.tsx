@@ -42,7 +42,8 @@ import {
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight
 } from 'lucide-react'
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { exportNote, type ExportFormat } from '@/utils/exportNote'
+import { exportNote, exportToDownloads, type ExportFormat } from '@/utils/exportNote'
+import { ExportSaveModal } from './ExportSaveModal'
 import { syncHistoryToRemote, restoreHistoryFromRemote, toRelativePath } from '@/utils/sync'
 import { useAppStore } from '@/store'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
@@ -71,6 +72,7 @@ interface NoteEditorProps {
 export default function NoteEditor({ note }: NoteEditorProps) {
   const { updateNote, addHistoryEntry, setShowHistory, settings, showToast, mergeRemoteHistory, localRootFolder, appVersion } = useAppStore()
   const [showExportMenu, setShowExportMenu] = useState(false)
+  const [exportTarget, setExportTarget] = useState<{ format: ExportFormat; title: string; html: string } | null>(null)
   const [isCreatingHistory, setIsCreatingHistory] = useState(false)
   const creatingHistoryRef = useRef(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
@@ -247,11 +249,9 @@ export default function NoteEditor({ note }: NoteEditorProps) {
 
   if (!editor) return null
 
-  const handleExport = async (format: ExportFormat) => {
+  const handleExport = (format: ExportFormat) => {
     setShowExportMenu(false)
-    const title = note.title || 'untitled'
-    const htmlContent = editor.getHTML()
-    await exportNote(title, htmlContent, format)
+    setExportTarget({ format, title: note.title || 'untitled', html: editor.getHTML() })
   }
 
   // Manual history creation
@@ -1053,10 +1053,10 @@ export default function NoteEditor({ note }: NoteEditorProps) {
               minWidth: '180px',
             }}>
               {[
-                { format: 'markdown' as ExportFormat, label: 'Markdown', icon: FileText, ext: '.md' },
-                { format: 'html' as ExportFormat, label: 'HTML', icon: FileCode, ext: '.html' },
-                { format: 'word' as ExportFormat, label: 'Word', icon: FileType, ext: '.docx' },
-                { format: 'pdf' as ExportFormat, label: 'PDF', icon: FileType, ext: '.pdf' },
+                { format: 'markdown' as ExportFormat, label: 'Markdown 文档', icon: FileText, ext: '.md' },
+                { format: 'html' as ExportFormat, label: 'HTML 网页', icon: FileCode, ext: '.html' },
+                { format: 'word' as ExportFormat, label: 'Word 文档', icon: FileType, ext: '.docx' },
+                { format: 'pdf' as ExportFormat, label: 'PDF 文档', icon: FileType, ext: '.pdf' },
               ].map(({ format, label, icon: Icon, ext }) => (
                 <button
                   key={format}
@@ -1088,6 +1088,35 @@ export default function NoteEditor({ note }: NoteEditorProps) {
             </div>
           )}
         </div>
+
+        {exportTarget && (
+          <ExportSaveModal
+            format={exportTarget.format}
+            defaultTitle={exportTarget.title}
+            onClose={() => setExportTarget(null)}
+            onSave={async (filename) => {
+              try {
+                await exportToDownloads(exportTarget.title, exportTarget.html, exportTarget.format, filename)
+                showToast(`已导出到下载文件夹：${filename}`, 'success')
+                setExportTarget(null)
+              } catch (err: any) {
+                console.error('[Export] failed:', err)
+                showToast('导出失败：' + (err?.message || err), 'error')
+              }
+            }}
+            onChooseOther={async () => {
+              try {
+                const t = exportTarget
+                setExportTarget(null)
+                await exportNote(t.title, t.html, t.format)
+                showToast('导出成功', 'success')
+              } catch (err: any) {
+                console.error('[Export] failed:', err)
+                showToast('导出失败：' + (err?.message || err), 'error')
+              }
+            }}
+          />
+        )}
       </div>
 
       {/* ─── Editor Content ─── */}

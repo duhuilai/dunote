@@ -7,7 +7,8 @@ import {
 } from 'lucide-react'
 import NoteEditor from './NoteEditor'
 import HistoryModal from './HistoryModal'
-import { exportNote, type ExportFormat } from '@/utils/exportNote'
+import { exportNote, exportToDownloads, type ExportFormat } from '@/utils/exportNote'
+import { ExportSaveModal } from './ExportSaveModal'
 import { open, message } from '@tauri-apps/plugin-dialog'
 import { readDir, readTextFile, writeTextFile, mkdir, exists, remove } from '@tauri-apps/plugin-fs'
 import { appConfigDir, join, dirname } from '@tauri-apps/api/path'
@@ -401,6 +402,8 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
   x: number; y: number; note: any; onClose: () => void; onDelete: (note: any) => void; onRevealFile?: (filePath: string) => void
 }) {
   const [showExportSubmenu, setShowExportSubmenu] = useState(false)
+  const [exportTarget, setExportTarget] = useState<{ format: ExportFormat; title: string; html: string } | null>(null)
+  const showToast = useAppStore((s) => s.showToast)
 
   const handleExport = async (format: ExportFormat) => {
     setShowExportSubmenu(false)
@@ -424,8 +427,7 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
       return
     }
 
-    await exportNote(title, htmlContent, format)
-    onClose()
+    setExportTarget({ format, title, html: htmlContent })
   }
 
   const canReveal = !!note?._isLocalFile && !!note?.filePath
@@ -438,10 +440,10 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
   ]
 
   const exportFormats: { format: ExportFormat; label: string; icon: React.ComponentType<{ size?: number }>; ext: string }[] = [
-    { format: 'markdown', label: 'Markdown', icon: FileText, ext: '.md' },
-    { format: 'html', label: 'HTML', icon: FileCode, ext: '.html' },
-    { format: 'word', label: 'Word', icon: FileType, ext: '.docx' },
-    { format: 'pdf', label: 'PDF', icon: FileType, ext: '.pdf' },
+    { format: 'markdown', label: 'Markdown 文档', icon: FileText, ext: '.md' },
+    { format: 'html', label: 'HTML 网页', icon: FileCode, ext: '.html' },
+    { format: 'word', label: 'Word 文档', icon: FileType, ext: '.docx' },
+    { format: 'pdf', label: 'PDF 文档', icon: FileType, ext: '.pdf' },
   ]
 
   return (
@@ -543,6 +545,35 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
           )}
         </div>
       ))}
+
+      {exportTarget && (
+        <ExportSaveModal
+          format={exportTarget.format}
+          defaultTitle={exportTarget.title}
+          onClose={() => setExportTarget(null)}
+          onSave={async (filename) => {
+            try {
+              await exportToDownloads(exportTarget.title, exportTarget.html, exportTarget.format, filename)
+              showToast(`已导出到下载文件夹：${filename}`, 'success')
+              setExportTarget(null)
+            } catch (err: any) {
+              console.error('[Export] failed:', err)
+              showToast('导出失败：' + (err?.message || err), 'error')
+            }
+          }}
+          onChooseOther={async () => {
+            try {
+              const t = exportTarget
+              setExportTarget(null)
+              await exportNote(t.title, t.html, t.format)
+              showToast('导出成功', 'success')
+            } catch (err: any) {
+              console.error('[Export] failed:', err)
+              showToast('导出失败：' + (err?.message || err), 'error')
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

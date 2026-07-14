@@ -1,8 +1,9 @@
 import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
 import { save } from '@tauri-apps/plugin-dialog'
-import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs'
+import { writeFile, BaseDirectory } from '@tauri-apps/plugin-fs'
 import { buildDocx } from './exportWord'
+import html2pdf from 'html2pdf.js'
 
 /**
  * Format-specific file filters for the Tauri save dialog
@@ -12,6 +13,10 @@ const FORMAT_FILTERS: Record<ExportFormat, { name: string; extensions: string[] 
   html:     { name: 'HTML',     extensions: ['html', 'htm'] },
   word:     { name: 'Word',     extensions: ['docx'] },
   pdf:      { name: 'PDF',      extensions: ['pdf'] },
+}
+
+export function getFormatExt(format: ExportFormat): string {
+  return FORMAT_FILTERS[format].extensions[0]
 }
 
 /**
@@ -62,7 +67,7 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
   <title>${title}</title>
   <style>
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Microsoft YaHei', sans-serif;
       max-width: 800px;
       margin: 0 auto;
       padding: 40px 20px;
@@ -145,22 +150,20 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
 }
 
 /**
- * 用系统打印对话框导出 PDF（跨平台最可靠，不依赖 html2canvas）。
- * 通过隐藏 iframe 渲染完整样式文档，等待图片加载后调用 print()，
- * 用户在打印对话框中选择“存储为 PDF”即可。
+ * 用 html2pdf.js 生成真正的 PDF 字节数组。
+ * 之前用 window.print() 在 macOS WebView 上静默无响应；这里改为前端直接生成 PDF 文件，
+ * 再通过 Tauri 保存对话框落盘，跨平台稳定可用。
  */
-async function printNoteAsPdf(title: string, htmlContent: string): Promise<void> {
-  const html = buildHtmlDocument(title, htmlContent)
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('style', 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;')
-  document.body.appendChild(iframe)
-  const idoc = iframe.contentWindow!.document
-  idoc.open()
-  idoc.write(html)
-  idoc.close()
+async function buildPdfBytes(title: string, htmlContent: string): Promise<Uint8Array> {
+  const fullHtml = buildHtmlDocument(title, htmlContent)
+  // 离屏容器：必须真实布局（不能 display:none），html2canvas 才能读取尺寸与图片
+  const container = document.createElement('div')
+  container.setAttribute('style', 'position:fixed; left:-10000px; top:0; width:794px; background:#fff;')
+  container.innerHTML = fullHtml
+  document.body.appendChild(container)
 
-  // 等待图片加载完成再打印，避免图片区域空白
-  const imgs = Array.from(idoc.querySelectorAll('img')) as HTMLImageElement[]
+  // 等待图片（多为 base64 内嵌）加载完成，避免空白
+  const imgs = Array.from(container.querySelectorAll('img')) as HTMLImageElement[]
   await Promise.all(
     imgs.map(
       (img) =>
@@ -168,20 +171,28 @@ async function printNoteAsPdf(title: string, htmlContent: string): Promise<void>
           if (img.complete) return resolve()
           img.onload = () => resolve()
           img.onerror = () => resolve()
+          // 超时兜底，避免跨域图片卡住
+          setTimeout(resolve, 3000)
         }),
     ),
   )
 
-  iframe.contentWindow!.focus()
-  iframe.contentWindow!.print()
-  // 打印对话框关闭后移除 iframe
-  setTimeout(() => {
-    try {
-      document.body.removeChild(iframe)
-    } catch {
-      /* ignore */
+  try {
+    const opt = {
+      margin: [10, 10, 10, 10] as [number, number, number, number],
+      filename: `${title}.pdf`,
+      image: { type: 'jpeg' as const, quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false, width: 794 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+      pagebreak: { mode: ['css', 'legacy'] },
     }
-  }, 3000)
+    const worker = html2pdf().set(opt).from(container)
+    const blob: Blob = await worker.outputPdf('blob')
+    const ab = await blob.arrayBuffer()
+    return new Uint8Array(ab)
+  } finally {
+    document.body.removeChild(container)
+  }
 }
 
 /**
@@ -190,19 +201,35 @@ async function printNoteAsPdf(title: string, htmlContent: string): Promise<void>
 export type ExportFormat = 'markdown' | 'html' | 'word' | 'pdf'
 
 /**
- * Main export function: opens a native save dialog and writes the file via Tauri
+ * 统一生成各格式的字节数组（markdown/html 为 UTF-8 文本，word/pdf 为二进制）。
+ * 供「原生保存对话框」与「自定义中文保存弹窗」两条路径共用。
+ */
+export async function buildExportBytes(
+  title: string,
+  htmlContent: string,
+  format: ExportFormat,
+): Promise<Uint8Array> {
+  switch (format) {
+    case 'markdown':
+      return new TextEncoder().encode(htmlToMarkdown(title, htmlContent))
+    case 'html':
+      return new TextEncoder().encode(buildHtmlDocument(title, htmlContent))
+    case 'word':
+      return await buildDocx(title, htmlContent)
+    case 'pdf':
+      return await buildPdfBytes(title, htmlContent)
+  }
+}
+
+/**
+ * Main export function: opens a native save dialog and writes the file via Tauri.
+ * 作为「选择其他位置…」的回退路径（原生对话框的确认按钮由操作系统绘制，无法汉化）。
  */
 export async function exportNote(
   title: string,
   htmlContent: string,
-  format: ExportFormat
+  format: ExportFormat,
 ): Promise<void> {
-  // PDF 走系统打印对话框（存储为 PDF），不经过 Tauri 保存对话框
-  if (format === 'pdf') {
-    await printNoteAsPdf(title, htmlContent)
-    return
-  }
-
   const filter = FORMAT_FILTERS[format]
   if (!filter) throw new Error(`Unsupported export format: ${format}`)
 
@@ -215,23 +242,22 @@ export async function exportNote(
 
   if (!filePath) return // User cancelled
 
-  switch (format) {
-    case 'markdown': {
-      const mdContent = htmlToMarkdown(title, htmlContent)
-      await writeTextFile(filePath, mdContent)
-      break
-    }
-    case 'html': {
-      const fullHTML = buildHtmlDocument(title, htmlContent)
-      await writeTextFile(filePath, fullHTML)
-      break
-    }
-    case 'word': {
-      const bytes = await buildDocx(title, htmlContent)
-      await writeFile(filePath, bytes)
-      break
-    }
-  }
-
+  const bytes = await buildExportBytes(title, htmlContent, format)
+  await writeFile(filePath, bytes)
   console.log(`[Export] Successfully exported ${format} to: ${filePath}`)
+}
+
+/**
+ * 直接写入「下载文件夹」（BaseDirectory.Download），用于自定义中文保存弹窗，
+ * 避免操作系统原生 Save 按钮无法汉化的问题。返回最终文件名。
+ */
+export async function exportToDownloads(
+  title: string,
+  htmlContent: string,
+  format: ExportFormat,
+  filename: string,
+): Promise<string> {
+  const bytes = await buildExportBytes(title, htmlContent, format)
+  await writeFile(filename, bytes, { baseDir: BaseDirectory.Download })
+  return filename
 }

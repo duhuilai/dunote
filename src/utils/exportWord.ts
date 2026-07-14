@@ -489,7 +489,6 @@ export async function buildDocx(title: string, html: string): Promise<Uint8Array
     sections: [{ children: bodyEls }],
   })
 
-  const blob = await Packer.toBlob(document)
-  const ab = await blob.arrayBuffer()
+  const ab = await Packer.toArrayBuffer(document)
   return new Uint8Array(ab)
 }
