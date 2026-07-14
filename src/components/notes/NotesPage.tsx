@@ -3,14 +3,15 @@ import { useAppStore } from '@/store'
 import {
   Search, Plus, ChevronDown, ChevronRight, ChevronRight as ChevronRightIcon, Folder,
   Clock, Upload, Download, Trash2, Edit3, PanelRightOpen, PanelRightClose,
-  FileText, FileCode, FileType, Users, BookOpen, ExternalLink
+  FileText, FileCode, FileType, Users, BookOpen, ExternalLink, FolderOpen
 } from 'lucide-react'
 import NoteEditor from './NoteEditor'
 import HistoryModal from './HistoryModal'
 import { exportNote, type ExportFormat } from '@/utils/exportNote'
 import { open, message } from '@tauri-apps/plugin-dialog'
 import { readDir, readTextFile, writeTextFile, mkdir, exists, remove } from '@tauri-apps/plugin-fs'
-import { appConfigDir, join } from '@tauri-apps/api/path'
+import { appConfigDir, join, dirname } from '@tauri-apps/api/path'
+import { open as shellOpen } from '@tauri-apps/plugin-shell'
 import { marked } from 'marked'
 
 /* ─── Color Tokens ─── */
@@ -396,7 +397,9 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
 }
 
 /* ─── Context Menu ─── */
-function ContextMenu({ x, y, note, onClose, onDelete }: { x: number; y: number; note: any; onClose: () => void; onDelete: (note: any) => void }) {
+function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
+  x: number; y: number; note: any; onClose: () => void; onDelete: (note: any) => void; onRevealFile?: (filePath: string) => void
+}) {
   const [showExportSubmenu, setShowExportSubmenu] = useState(false)
 
   const handleExport = async (format: ExportFormat) => {
@@ -405,24 +408,31 @@ function ContextMenu({ x, y, note, onClose, onDelete }: { x: number; y: number; 
     const title = note.title || 'untitled'
     let htmlContent = note.content || ''
 
-    // For local files, content may not be loaded yet — read from disk
-    if (note._isLocalFile && note.filePath && !htmlContent) {
+    // 本地文件：始终以磁盘最新内容为准（列表中的 content 可能陈旧或未加载）
+    if (note._isLocalFile && note.filePath) {
       try {
-        htmlContent = await readTextFile(note.filePath as string)
+        const disk = await readTextFile(note.filePath as string)
+        if (disk && disk.trim()) htmlContent = disk
       } catch (err) {
         console.error('[Export] Failed to read local file:', err)
-        alert('导出失败：无法读取文件内容')
-        onClose()
-        return
       }
+    }
+
+    if (!htmlContent || !htmlContent.trim()) {
+      alert('该笔记暂无内容可导出')
+      onClose()
+      return
     }
 
     await exportNote(title, htmlContent, format)
     onClose()
   }
 
+  const canReveal = !!note?._isLocalFile && !!note?.filePath
+
   const menuItems = [
     { icon: Download, label: '导出为...', action: () => setShowExportSubmenu(true), hasSubmenu: true, danger: false },
+    { icon: FolderOpen, label: '在文件夹查看', action: () => { if (note?.filePath) onRevealFile?.(note.filePath); onClose() }, danger: false, show: canReveal },
     { icon: Edit3, label: '重命名', action: () => {}, danger: false },
     { icon: Trash2, label: '删除', action: () => onDelete(note), danger: true },
   ]
@@ -450,7 +460,7 @@ function ContextMenu({ x, y, note, onClose, onDelete }: { x: number; y: number; 
       }}
       onMouseLeave={() => { setShowExportSubmenu(false); onClose() }}
     >
-      {menuItems.map(({ icon: Icon, label, action, hasSubmenu, danger }) => (
+      {menuItems.filter(m => m.show !== false).map(({ icon: Icon, label, action, hasSubmenu, danger }) => (
         <div key={label} style={{ position: 'relative' }}>
           <button
             onClick={() => { action(); if (!hasSubmenu) onClose() }}
@@ -538,7 +548,7 @@ function ContextMenu({ x, y, note, onClose, onDelete }: { x: number; y: number; 
 }
 
 /* ─── Folder Context Menu ─── */
-function FolderContextMenu({ x, y, folder, onClose, onImport }: { x: number; y: number; folder: any; onClose: () => void; onImport: (folder: any) => void }) {
+function FolderContextMenu({ x, y, folder, onClose, onImport, onRevealFolder }: { x: number; y: number; folder: any; onClose: () => void; onImport: (folder: any) => void; onRevealFolder?: (path: string) => void }) {
   return (
     <div
       style={{
@@ -578,6 +588,31 @@ function FolderContextMenu({ x, y, folder, onClose, onImport }: { x: number; y: 
         <Upload size={15} />
         <span style={{ flex: 1 }}>导入 Markdown 文件</span>
       </button>
+      {folder?.path && (
+        <button
+          onClick={() => { if (folder?.path) onRevealFolder?.(folder.path); onClose() }}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '8px 14px',
+            fontSize: '13px',
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            textAlign: 'left',
+            fontFamily: 'inherit',
+            color: C.text,
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+        >
+          <FolderOpen size={15} />
+          <span style={{ flex: 1 }}>在文件夹查看</span>
+        </button>
+      )}
     </div>
   )
 }
@@ -776,6 +811,26 @@ export default function NotesPage() {
   )
 
   const selectedNote = [...notes, ...localNotes].find((n) => n.id === selectedNoteId)
+
+  // 用文件管理器（访达 / 资源管理器）打开目录
+  const revealFolder = useCallback(async (path: string) => {
+    try {
+      await shellOpen(path)
+    } catch (err) {
+      console.error('[Reveal] failed to open folder:', err)
+      alert('无法打开文件夹：' + (err instanceof Error ? err.message : String(err)))
+    }
+  }, [])
+
+  const revealFile = useCallback(async (filePath: string) => {
+    try {
+      const dir = await dirname(filePath)
+      await shellOpen(dir)
+    } catch (err) {
+      console.error('[Reveal] failed to open containing folder:', err)
+      alert('无法打开文件夹：' + (err instanceof Error ? err.message : String(err)))
+    }
+  }, [])
 
   const handleContextMenu = useCallback((e: React.MouseEvent, note: any) => {
     e.preventDefault()
@@ -1627,12 +1682,12 @@ export default function NotesPage() {
 
       {/* Context Menu */}
       {ctxMenu && (
-        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} note={ctxMenu.note} onClose={() => setCtxMenu(null)} onDelete={handleDeleteNote} />
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} note={ctxMenu.note} onClose={() => setCtxMenu(null)} onDelete={handleDeleteNote} onRevealFile={revealFile} />
       )}
 
       {/* Folder Context Menu */}
       {folderCtxMenu && (
-        <FolderContextMenu x={folderCtxMenu.x} y={folderCtxMenu.y} folder={folderCtxMenu.folder} onClose={() => setFolderCtxMenu(null)} onImport={handleImportMarkdown} />
+        <FolderContextMenu x={folderCtxMenu.x} y={folderCtxMenu.y} folder={folderCtxMenu.folder} onClose={() => setFolderCtxMenu(null)} onImport={handleImportMarkdown} onRevealFolder={revealFolder} />
       )}
 
       {/* ─── Note Creation Dialog ─── */}

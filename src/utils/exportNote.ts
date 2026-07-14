@@ -267,6 +267,31 @@ async function generatePdfBytes(title: string, htmlContent: string): Promise<Uin
   container.insertBefore(style, container.firstChild)
   document.body.appendChild(container)
 
+  // 预加载图片为 base64，避免 html2canvas 跨域导致图片不显示（文字不受影响）
+  try {
+    const imgs = Array.from(container.querySelectorAll('img')) as HTMLImageElement[]
+    await Promise.all(imgs.map(async (img) => {
+      const src = img.getAttribute('src') || ''
+      if (src && !src.startsWith('data:')) {
+        try {
+          const res = await fetch(src)
+          const blob = await res.blob()
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve(reader.result as string)
+            reader.onerror = reject
+            reader.readAsDataURL(blob)
+          })
+          img.src = dataUrl
+        } catch {
+          /* 跨域图片无法预加载则保留原 src */
+        }
+      }
+    }))
+  } catch {
+    /* ignore image preload errors */
+  }
+
   try {
     const opt = {
       margin: [15, 15, 15, 15] as [number, number, number, number],
