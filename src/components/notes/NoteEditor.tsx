@@ -67,9 +67,11 @@ const C = {
 
 interface NoteEditorProps {
   note: Note
+  /** 本地文件笔记落盘后，同步更新内存中的 localNotes（selectedNote 来源），避免切回时读到旧内容导致图片丢失 */
+  onLocalPersist?: (noteId: string, content: string) => void
 }
 
-export default function NoteEditor({ note }: NoteEditorProps) {
+export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
   const { updateNote, addHistoryEntry, setShowHistory, settings, showToast, mergeRemoteHistory, localRootFolder, appVersion } = useAppStore()
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [exportTarget, setExportTarget] = useState<{ format: ExportFormat; title: string; html: string } | null>(null)
@@ -86,6 +88,9 @@ export default function NoteEditor({ note }: NoteEditorProps) {
     isLocal: !!(note as any)._isLocalFile,
     path: (note as any).filePath ?? null,
   })
+  // 让 useEditor 配置闭包里也能拿到最新的 onLocalPersist（避免闭包捕获初始值）
+  const onLocalPersistRef = useRef(onLocalPersist)
+  onLocalPersistRef.current = onLocalPersist
 
   const editor = useEditor({
     extensions: [
@@ -215,6 +220,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
             writeTextFile(meta.path, content)
               .then(() => console.log(`[Tauri] Successfully wrote to file: ${meta.path}`))
               .catch((e) => console.error(`[Tauri] Failed to write to file: ${meta.path}`, e))
+            // 同时同步内存里的 localNotes（selectedNote 来源），否则切回时读到的仍是旧内容
+            onLocalPersistRef.current?.(meta.noteId, content)
           }
           // Update baseline after saving
           baselineContentRef.current = content
@@ -248,6 +255,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       writeTextFile(meta.path, content)
         .then(() => console.log(`[Tauri] Flush wrote to file: ${meta.path}`))
         .catch((e) => console.error(`[Tauri] Flush failed: ${meta.path}`, e))
+      // 同步内存里的 localNotes，避免切回时读到旧内容
+      onLocalPersistRef.current?.(meta.noteId, content)
     }
     baselineContentRef.current = content
   }, [updateNote])
@@ -261,33 +270,29 @@ export default function NoteEditor({ note }: NoteEditorProps) {
 
   useEffect(() => {
     if (!editor) return
-    // 自编辑产生的内容变更（note.content 已通过 onUpdate 上报过），
-    // 此时编辑器里的 DOM 就是最新内容，若再 setContent 会把光标重置到开头，
-    // 表现为“中文输入后光标跳到第一个字前面”。因此直接跳过，仅同步 baseline。
-    if (note.content === lastEmittedRef.current) {
-      baselineContentRef.current = note.content || ''
-      editorMetaRef.current = {
-        noteId: note.id,
-        isLocal: !!(note as any)._isLocalFile,
-        path: (note as any).filePath ?? null,
+    const current = editorMetaRef.current
+    // 同一篇笔记：仅当外部内容变化（非编辑器自身产生）时才重新加载，避免光标跳动
+    if (current.noteId === note.id) {
+      if (note.content !== lastEmittedRef.current && editor.getHTML() !== note.content) {
+        baselineContentRef.current = note.content || ''
+        editor.commands.setContent(note.content)
+        lastEmittedRef.current = note.content || ''
       }
       return
     }
-    if (editor.getHTML() !== note.content) {
-      // 切到其它文档前，先把当前编辑器里未落盘的内容（如刚粘贴的图片）保存到“原笔记”，避免丢失
-      flushPending()
-      console.log(`[NoteEditor] Syncing content for note ${note.id}, content length: ${note.content?.length || 0}`)
-      // Update baseline BEFORE setContent to prevent onUpdate auto-save from triggering
-      baselineContentRef.current = note.content || ''
-      editor.commands.setContent(note.content)
-      lastEmittedRef.current = note.content || ''
-      editorMetaRef.current = {
-        noteId: note.id,
-        isLocal: !!(note as any)._isLocalFile,
-        path: (note as any).filePath ?? null,
-      }
-      console.log(`[NoteEditor] Content set and baseline updated`)
+    // 切换到不同笔记：先把旧笔记里尚未落盘的内容（如刚粘贴的图片）保存到“原笔记”，避免丢失
+    flushPending()
+    console.log(`[NoteEditor] Switching note -> ${note.id}, content length: ${note.content?.length || 0}`)
+    // Update baseline BEFORE setContent to prevent onUpdate auto-save from triggering
+    baselineContentRef.current = note.content || ''
+    editor.commands.setContent(note.content)
+    lastEmittedRef.current = note.content || ''
+    editorMetaRef.current = {
+      noteId: note.id,
+      isLocal: !!(note as any)._isLocalFile,
+      path: (note as any).filePath ?? null,
     }
+    console.log(`[NoteEditor] Content set and baseline updated`)
   }, [note.id, note.content])
 
   if (!editor) return null

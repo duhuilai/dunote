@@ -843,6 +843,14 @@ export default function NotesPage() {
 
   const selectedNote = [...notes, ...localNotes].find((n) => n.id === selectedNoteId)
 
+  // 本地文件笔记在编辑器里落盘后，同步更新内存中的 localNotes（selectedNote 来源），
+  // 否则切换文档再切回时会读到旧内容，导致刚粘贴的图片丢失
+  const handleLocalNotePersist = useCallback((noteId: string, content: string) => {
+    setLocalNotes((prev) =>
+      prev.map((n) => (n.id === noteId ? { ...n, content, updatedAt: new Date().toISOString() } : n)),
+    )
+  }, [setLocalNotes])
+
   // 用文件管理器（访达 / 资源管理器）打开目录
   const revealFolder = useCallback(async (path: string) => {
     try {
@@ -1613,7 +1621,7 @@ export default function NotesPage() {
         }}
       >
         {selectedNote ? (
-          <NoteEditor note={selectedNote} />
+          <NoteEditor note={selectedNote} onLocalPersist={handleLocalNotePersist} />
         ) : (
           <div
             style={{
