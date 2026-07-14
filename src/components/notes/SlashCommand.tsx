@@ -11,6 +11,7 @@ import {
   useState, useEffect, useRef, forwardRef, useImperativeHandle,
 } from 'react'
 import type { Editor, Range } from '@tiptap/react'
+import { toEmbeddedImageSrc } from '@/utils/imageEmbed'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -142,12 +143,14 @@ const commandItems: SlashCommandItem[] = [
   },
   {
     title: '图片',
-    description: '插入网络图片',
+    description: '插入图片（自动保存到笔记内）',
     icon: ImageIcon,
-    command: ({ editor, range }) => {
+    command: async ({ editor, range }) => {
       editor.chain().focus().deleteRange(range)
       const url = prompt('输入图片地址:')
-      if (url) editor.chain().focus().setImage({ src: url }).run()
+      if (!url) return
+      const src = await toEmbeddedImageSrc(url)
+      editor.chain().focus().setImage({ src }).run()
     },
   },
   {

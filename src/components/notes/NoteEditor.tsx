@@ -18,6 +18,7 @@ import Color from '@tiptap/extension-color'
 import FontFamily from '@tiptap/extension-font-family'
 import { FontSize } from '@/extensions/FontSize'
 import { SlashCommand } from './SlashCommand'
+import { toEmbeddedImageSrc } from '@/utils/imageEmbed'
 import type { Note } from '@/types'
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
@@ -888,11 +889,13 @@ export default function NoteEditor({ note }: NoteEditorProps) {
           <Link2 size={16} />
         </ToolBtn>
         <ToolBtn
-          onClick={() => {
+          onClick={async () => {
             const url = prompt('输入图片地址:')
-            if (url) editor.chain().focus().setImage({ src: url }).run()
+            if (!url) return
+            const src = await toEmbeddedImageSrc(url)
+            editor.chain().focus().setImage({ src }).run()
           }}
-          title="图片"
+          title="图片（自动保存到笔记内）"
         >
           <ImageIcon size={16} />
         </ToolBtn>

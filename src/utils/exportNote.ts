@@ -1,8 +1,7 @@
 import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
-import html2pdf from 'html2pdf.js'
 import { save } from '@tauri-apps/plugin-dialog'
-import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
 
 /**
  * Format-specific file filters for the Tauri save dialog
@@ -228,88 +227,43 @@ xmlns="http://www.w3.org/TR/REC-html40">
 }
 
 /**
- * Generate PDF as Uint8Array from HTML content
+ * 用系统打印对话框导出 PDF（跨平台最可靠，不依赖 html2canvas）。
+ * 通过隐藏 iframe 渲染完整样式文档，等待图片加载后调用 print()，
+ * 用户在打印对话框中选择“存储为 PDF”即可。
  */
-async function generatePdfBytes(title: string, htmlContent: string): Promise<Uint8Array> {
-  const container = document.createElement('div')
-  container.style.position = 'fixed'
-  container.style.left = '-9999px'
-  container.style.top = '0'
-  container.style.width = '800px'
-  container.style.background = '#FFFFFF'
-  container.style.padding = '40px'
-  container.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
-  container.style.lineHeight = '1.6'
-  container.style.color = '#1E293B'
-  container.innerHTML = `
-    <h1 style="font-size: 24px; font-weight: 700; margin-bottom: 20px; border-bottom: 2px solid #E2E8F0; padding-bottom: 10px;">${title}</h1>
-    <div style="font-size: 14px;">${htmlContent}</div>
-  `
+async function printNoteAsPdf(title: string, htmlContent: string): Promise<void> {
+  const html = buildHtmlDocument(title, htmlContent)
+  const iframe = document.createElement('iframe')
+  iframe.setAttribute('style', 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;')
+  document.body.appendChild(iframe)
+  const idoc = iframe.contentWindow!.document
+  idoc.open()
+  idoc.write(html)
+  idoc.close()
 
-  const style = document.createElement('style')
-  style.textContent = `
-    h1, h2, h3, h4, h5, h6 { margin-top: 1em; margin-bottom: 0.5em; font-weight: 600; }
-    h2 { font-size: 18px; }
-    h3 { font-size: 16px; }
-    p { margin: 0.6em 0; }
-    code { background: #F1F5F9; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-    pre { background: #F1F5F9; padding: 12px; border-radius: 6px; overflow-x: auto; }
-    pre code { background: transparent; padding: 0; }
-    blockquote { border-left: 3px solid #2563EB; padding-left: 12px; margin: 1em 0; color: #64748B; }
-    table { border-collapse: collapse; width: 100%; margin: 1em 0; }
-    th, td { border: 1px solid #E2E8F0; padding: 8px 12px; text-align: left; }
-    th { background: #F1F5F9; font-weight: 600; }
-    ul, ol { padding-left: 2em; margin: 0.5em 0; }
-    img { max-width: 100%; height: auto; }
-    a { color: #2563EB; text-decoration: none; }
-    hr { border: none; border-top: 1px solid #E2E8F0; margin: 1.5em 0; }
-  `
-  container.insertBefore(style, container.firstChild)
-  document.body.appendChild(container)
+  // 等待图片加载完成再打印，避免图片区域空白
+  const imgs = Array.from(idoc.querySelectorAll('img')) as HTMLImageElement[]
+  await Promise.all(
+    imgs.map(
+      (img) =>
+        new Promise<void>((resolve) => {
+          if (img.complete) return resolve()
+          img.onload = () => resolve()
+          img.onerror = () => resolve()
+        }),
+    ),
+  )
 
-  // 预加载图片为 base64，避免 html2canvas 跨域导致图片不显示（文字不受影响）
-  try {
-    const imgs = Array.from(container.querySelectorAll('img')) as HTMLImageElement[]
-    await Promise.all(imgs.map(async (img) => {
-      const src = img.getAttribute('src') || ''
-      if (src && !src.startsWith('data:')) {
-        try {
-          const res = await fetch(src)
-          const blob = await res.blob()
-          const dataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader()
-            reader.onloadend = () => resolve(reader.result as string)
-            reader.onerror = reject
-            reader.readAsDataURL(blob)
-          })
-          img.src = dataUrl
-        } catch {
-          /* 跨域图片无法预加载则保留原 src */
-        }
-      }
-    }))
-  } catch {
-    /* ignore image preload errors */
-  }
-
-  try {
-    const opt = {
-      margin: [15, 15, 15, 15] as [number, number, number, number],
-      filename: `${title}.pdf`,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
-      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] },
+  iframe.contentWindow!.focus()
+  iframe.contentWindow!.print()
+  // 打印对话框关闭后移除 iframe
+  setTimeout(() => {
+    try {
+      document.body.removeChild(iframe)
+    } catch {
+      /* ignore */
     }
-
-    // Use outputPdf('arraybuffer') to get raw PDF bytes
-    const worker = html2pdf().set(opt).from(container)
-    const pdfBlob: Blob = await worker.outputPdf('blob')
-    const arrayBuffer = await pdfBlob.arrayBuffer()
-    return new Uint8Array(arrayBuffer)
-  } finally {
-    document.body.removeChild(container)
-  }
+  }, 3000)
 }
 
 /**
@@ -325,6 +279,12 @@ export async function exportNote(
   htmlContent: string,
   format: ExportFormat
 ): Promise<void> {
+  // PDF 走系统打印对话框（存储为 PDF），不经过 Tauri 保存对话框
+  if (format === 'pdf') {
+    await printNoteAsPdf(title, htmlContent)
+    return
+  }
+
   const filter = FORMAT_FILTERS[format]
   if (!filter) throw new Error(`Unsupported export format: ${format}`)
 
@@ -353,12 +313,7 @@ export async function exportNote(
       await writeTextFile(filePath, wordDoc)
       break
     }
-    case 'pdf': {
-      const pdfBytes = await generatePdfBytes(title, htmlContent)
-      await writeFile(filePath, pdfBytes)
-      break
-    }
   }
 
-  console.log(`[Export] Successfully exported to: ${filePath}`)
+  console.log(`[Export] Successfully exported ${format} to: ${filePath}`)
 }
