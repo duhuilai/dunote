@@ -36,9 +36,28 @@ function b64ToBytes(b64: string): Uint8Array {
   return bytes
 }
 
-/* ─── 工具：颜色归一化 ─── */
+/* ─── 工具：颜色归一化（支持 #rgb / #rrggbb / rgb() / rgba() / 命名色回退） ─── */
 function normColor(c: string): string {
-  return c.replace('#', '').toUpperCase()
+  if (!c) return '000000'
+  const raw = c.trim()
+  // 已是 6 位十六进制（可能带 #）
+  if (raw.startsWith('#')) {
+    let hex = raw.slice(1).replace(/[^0-9A-Fa-f]/g, '')
+    if (hex.length === 3) hex = hex.split('').map((x) => x + x).join('')
+    if (hex.length >= 6) return hex.slice(0, 6).toUpperCase()
+    return '000000'
+  }
+  // rgb() / rgba()
+  const m = raw.match(/rgba?\(([^)]+)\)/i)
+  if (m) {
+    const parts = m[1].split(',').map((s) => parseFloat(s))
+    const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n || 0)))
+    const toHex = (n: number) => clamp(n).toString(16).padStart(2, '0').toUpperCase()
+    return toHex(parts[0]) + toHex(parts[1]) + toHex(parts[2])
+  }
+  // 不带 # 的 6 位十六进制
+  if (/^[0-9A-Fa-f]{6}$/.test(raw)) return raw.toUpperCase()
+  return '000000'
 }
 
 /* ─── 工具：字号解析（返回半磅 half-points） ─── */

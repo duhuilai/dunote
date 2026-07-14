@@ -20,6 +20,61 @@ export function getFormatExt(format: ExportFormat): string {
 }
 
 /**
+ * 把单元格内的文本提取为单行；<br> 转为换行，块级标签的内容保留。
+ */
+function tableCellText(cell: HTMLElement): string {
+  const clone = cell.cloneNode(true) as HTMLElement
+  clone.querySelectorAll('br').forEach((br) => br.replaceWith('\n'))
+  const t = (clone.textContent || '').replace(/\n+/g, '\n').trim()
+  return t
+}
+
+/**
+ * 将任意 <table> 转为 GitHub 风格的 Markdown 表格行数组。
+ * turndown-plugin-gfm 仅转换“首行全为 <th>”的表格，首行混合 th/td 的键值表会被原样保留为 HTML，
+ * 因此这里在交给 turndown 之前自行转换，保证表格不丢失。
+ */
+function tableToMarkdown(table: HTMLElement): string[] {
+  const rows = Array.from(table.querySelectorAll('tr'))
+  if (!rows.length) return []
+  const matrix = rows.map((tr) =>
+    Array.from(tr.children)
+      .filter((c) => {
+        const t = (c as HTMLElement).tagName.toUpperCase()
+        return t === 'TD' || t === 'TH'
+      })
+      .map((c) => tableCellText(c as HTMLElement).replace(/\|/g, '\\|')),
+  )
+  const colCount = matrix.reduce((m, r) => Math.max(m, r.length), 0)
+  const pad = (r: string[]) => {
+    const out = r.slice()
+    while (out.length < colCount) out.push('')
+    return out
+  }
+  const head = pad(matrix[0])
+  const sep = head.map(() => '---')
+  const body = matrix.slice(1).map(pad)
+  const render = (r: string[]) => '| ' + r.join(' | ') + ' |'
+  return [render(head), render(sep), ...body.map(render)]
+}
+
+/**
+ * 预处理：把所有 <table> 替换为对应的 Markdown 表格文本，交给 turndown 时就是纯文本，
+ * 不会被 gfm 的 keep 规则原样保留为 HTML。用 <br> 分隔各行，确保 turndown 输出时保留换行（表格行不被合并）。
+ */
+function preprocessTables(html: string): string {
+  if (!/<table[\s>]/i.test(html)) return html
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  doc.querySelectorAll('table').forEach((table) => {
+    const lines = tableToMarkdown(table as HTMLElement)
+    const wrapper = doc.createElement('div')
+    wrapper.innerHTML = lines.join('<br>\n')
+    table.parentNode?.replaceChild(wrapper, table)
+  })
+  return doc.body.innerHTML
+}
+
+/**
  * Convert HTML content to Markdown string
  */
 function htmlToMarkdown(title: string, htmlContent: string): string {
@@ -45,7 +100,7 @@ function htmlToMarkdown(title: string, htmlContent: string): string {
     },
   })
 
-  const markdown = turndownService.turndown(htmlContent)
+  const markdown = turndownService.turndown(preprocessTables(htmlContent))
   // 内容若已以 H1 标题开头（模板自带），不再重复拼标题，避免标题出现两遍
   if (/^\s*<h1[\s>]/i.test(htmlContent.trim())) {
     return markdown
@@ -156,11 +211,15 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
  */
 async function buildPdfBytes(title: string, htmlContent: string): Promise<Uint8Array> {
   const fullHtml = buildHtmlDocument(title, htmlContent)
-  // 离屏容器：必须真实布局（不能 display:none），html2canvas 才能读取尺寸与图片
+  // 离屏渲染容器：用 0 尺寸的裁切外层把内容挡在用户视线外，但被截元素本身位于视口坐标 (0,0)，
+  // 这样 html2canvas 能在“屏幕坐标”正确读取布局（之前放到 left:-10000px 会被截成空白页）。
+  const wrapper = document.createElement('div')
+  wrapper.setAttribute('style', 'position:fixed; left:0; top:0; width:0; height:0; overflow:hidden; z-index:0;')
   const container = document.createElement('div')
-  container.setAttribute('style', 'position:fixed; left:-10000px; top:0; width:794px; background:#fff;')
+  container.setAttribute('style', 'width:794px; background:#fff; padding:40px; box-sizing:border-box;')
   container.innerHTML = fullHtml
-  document.body.appendChild(container)
+  wrapper.appendChild(container)
+  document.body.appendChild(wrapper)
 
   // 等待图片（多为 base64 内嵌）加载完成，避免空白
   const imgs = Array.from(container.querySelectorAll('img')) as HTMLImageElement[]
@@ -182,7 +241,7 @@ async function buildPdfBytes(title: string, htmlContent: string): Promise<Uint8A
       margin: [10, 10, 10, 10] as [number, number, number, number],
       filename: `${title}.pdf`,
       image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false, width: 794 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
       pagebreak: { mode: ['css', 'legacy'] },
     }
@@ -191,7 +250,7 @@ async function buildPdfBytes(title: string, htmlContent: string): Promise<Uint8A
     const ab = await blob.arrayBuffer()
     return new Uint8Array(ab)
   } finally {
-    document.body.removeChild(container)
+    document.body.removeChild(wrapper)
   }
 }
 

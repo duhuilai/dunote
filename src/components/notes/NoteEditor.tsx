@@ -80,6 +80,12 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   const baselineContentRef = useRef<string>(note.content || '')
   const lastEmittedRef = useRef<string>('') // 记录编辑器最近一次输出的 HTML，用于区分“自编辑”与“外部内容变更”
   const editorRef = useRef<Editor | null>(null)
+  // 记录“当前编辑器里加载的是哪个笔记”，用于切文档/卸载时把未保存的编辑正确落盘，避免图片等丢失
+  const editorMetaRef = useRef<{ noteId: string; isLocal: boolean; path: string | null }>({
+    noteId: note.id,
+    isLocal: !!(note as any)._isLocalFile,
+    path: (note as any).filePath ?? null,
+  })
 
   const editor = useEditor({
     extensions: [
@@ -155,9 +161,12 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         event.preventDefault()
         const ed = editorRef.current
         if (!ed) return true
+        const targetNoteId = editorMetaRef.current.noteId
         files.forEach(async (file) => {
           try {
             const src = await fileToDataUrl(file)
+            // 若粘贴/读取期间已切换到其它文档，丢弃本次插入，避免污染其它笔记
+            if (editorMetaRef.current.noteId !== targetNoteId) return
             ed.chain().focus().setImage({ src }).run()
           } catch {
             /* ignore */
@@ -174,9 +183,11 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         event.preventDefault()
         const ed = editorRef.current
         if (!ed) return true
+        const targetNoteId = editorMetaRef.current.noteId
         files.forEach(async (file) => {
           try {
             const src = await fileToDataUrl(file)
+            if (editorMetaRef.current.noteId !== targetNoteId) return
             ed.chain().focus().setImage({ src }).run()
           } catch {
             /* ignore */
@@ -190,24 +201,20 @@ export default function NoteEditor({ note }: NoteEditorProps) {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
       }
-      saveTimeoutRef.current = setTimeout(async () => {
+      saveTimeoutRef.current = setTimeout(() => {
         const content = editor.getHTML()
         // 记录编辑器本次产出的 HTML，供下方 effect 判断是否为自编辑（自编辑不回灌 setContent）
         lastEmittedRef.current = content
         // Only save if content actually changed from the baseline (last loaded/saved content)
         if (content !== baselineContentRef.current) {
-          // Update note in store
-          updateNote(note.id, { content })
-          
+          const meta = editorMetaRef.current
+          // Update note in store（始终落到“当前编辑器加载的笔记”，避免闭包 note.id 失效写错笔记）
+          updateNote(meta.noteId, { content })
           // If this is a local file, write back to source file using Tauri API
-          if ((note as any)._isLocalFile) {
-            const filePath = (note as any).filePath as string
-            try {
-              await writeTextFile(filePath, content)
-              console.log(`[Tauri] Successfully wrote to file: ${filePath}`)
-            } catch (error) {
-              console.error(`[Tauri] Failed to write to file: ${filePath}`, error)
-            }
+          if (meta.isLocal && meta.path) {
+            writeTextFile(meta.path, content)
+              .then(() => console.log(`[Tauri] Successfully wrote to file: ${meta.path}`))
+              .catch((e) => console.error(`[Tauri] Failed to write to file: ${meta.path}`, e))
           }
           // Update baseline after saving
           baselineContentRef.current = content
@@ -219,14 +226,38 @@ export default function NoteEditor({ note }: NoteEditorProps) {
   // Keep editorRef in sync for use inside handleKeyDown (TipTap v3 passes (view, event), not ({editor, event}))
   editorRef.current = editor
 
-  // Cleanup timeout on unmount
+  // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、防抖 1.5s 未触发的图片）写入 editorMetaRef 所指的笔记。
+  // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失。
+  const flushPending = useCallback(() => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+    }
+    const ed = editorRef.current
+    if (!ed || ed.isDestroyed) return
+    let content: string
+    try {
+      content = ed.getHTML()
+    } catch {
+      return
+    }
+    if (content === baselineContentRef.current) return
+    const meta = editorMetaRef.current
+    updateNote(meta.noteId, { content })
+    if (meta.isLocal && meta.path) {
+      writeTextFile(meta.path, content)
+        .then(() => console.log(`[Tauri] Flush wrote to file: ${meta.path}`))
+        .catch((e) => console.error(`[Tauri] Flush failed: ${meta.path}`, e))
+    }
+    baselineContentRef.current = content
+  }, [updateNote])
+
+  // Cleanup: flush pending save on unmount (e.g. closing editor) so last edits aren't lost
   useEffect(() => {
     return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-      }
+      flushPending()
     }
-  }, [])
+  }, [flushPending])
 
   useEffect(() => {
     if (!editor) return
@@ -235,14 +266,26 @@ export default function NoteEditor({ note }: NoteEditorProps) {
     // 表现为“中文输入后光标跳到第一个字前面”。因此直接跳过，仅同步 baseline。
     if (note.content === lastEmittedRef.current) {
       baselineContentRef.current = note.content || ''
+      editorMetaRef.current = {
+        noteId: note.id,
+        isLocal: !!(note as any)._isLocalFile,
+        path: (note as any).filePath ?? null,
+      }
       return
     }
     if (editor.getHTML() !== note.content) {
+      // 切到其它文档前，先把当前编辑器里未落盘的内容（如刚粘贴的图片）保存到“原笔记”，避免丢失
+      flushPending()
       console.log(`[NoteEditor] Syncing content for note ${note.id}, content length: ${note.content?.length || 0}`)
       // Update baseline BEFORE setContent to prevent onUpdate auto-save from triggering
       baselineContentRef.current = note.content || ''
       editor.commands.setContent(note.content)
       lastEmittedRef.current = note.content || ''
+      editorMetaRef.current = {
+        noteId: note.id,
+        isLocal: !!(note as any)._isLocalFile,
+        path: (note as any).filePath ?? null,
+      }
       console.log(`[NoteEditor] Content set and baseline updated`)
     }
   }, [note.id, note.content])
