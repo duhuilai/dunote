@@ -18,8 +18,20 @@ import Color from '@tiptap/extension-color'
 import FontFamily from '@tiptap/extension-font-family'
 import { FontSize } from '@/extensions/FontSize'
 import { SlashCommand } from './SlashCommand'
+import { confirm } from '@tauri-apps/plugin-dialog'
+import { showPrompt } from '@/utils/prompt'
 import { toEmbeddedImageSrc } from '@/utils/imageEmbed'
 import type { Note } from '@/types'
+
+/* ─── 将图片文件转为 dataURL（base64），用于把粘贴/拖入的图片内嵌进笔记，避免 blob: 临时地址丢失 ─── */
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
   Heading1, Heading2, Heading3,
@@ -131,6 +143,44 @@ export default function NoteEditor({ note }: NoteEditorProps) {
           return true
         }
         return false
+      },
+      // 粘贴 / 拖入图片：转为 base64 内嵌，避免 blob: 临时地址随软件重启或更新丢失
+      handlePaste: (_view, event) => {
+        const files = Array.from(event.clipboardData?.files ?? []).filter(
+          (f) => f.type.startsWith('image/'),
+        )
+        if (files.length === 0) return false
+        event.preventDefault()
+        const ed = editorRef.current
+        if (!ed) return true
+        files.forEach(async (file) => {
+          try {
+            const src = await fileToDataUrl(file)
+            ed.chain().focus().setImage({ src }).run()
+          } catch {
+            /* ignore */
+          }
+        })
+        return true
+      },
+      handleDrop: (_view, event) => {
+        const drag = event as DragEvent
+        const files = Array.from(drag.dataTransfer?.files ?? []).filter(
+          (f) => f.type.startsWith('image/'),
+        )
+        if (files.length === 0) return false
+        event.preventDefault()
+        const ed = editorRef.current
+        if (!ed) return true
+        files.forEach(async (file) => {
+          try {
+            const src = await fileToDataUrl(file)
+            ed.chain().focus().setImage({ src }).run()
+          } catch {
+            /* ignore */
+          }
+        })
+        return true
       },
     },
     onUpdate: ({ editor }) => {
@@ -880,8 +930,8 @@ export default function NoteEditor({ note }: NoteEditorProps) {
           <Minus size={16} />
         </ToolBtn>
         <ToolBtn
-          onClick={() => {
-            const url = prompt('输入链接地址:')
+          onClick={async () => {
+            const url = await showPrompt('输入链接地址:', 'https://')
             if (url) editor.chain().focus().setLink({ href: url }).run()
           }}
           title="链接"
@@ -890,7 +940,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
         </ToolBtn>
         <ToolBtn
           onClick={async () => {
-            const url = prompt('输入图片地址:')
+            const url = await showPrompt('输入图片地址:', 'https://')
             if (!url) return
             const src = await toEmbeddedImageSrc(url)
             editor.chain().focus().setImage({ src }).run()

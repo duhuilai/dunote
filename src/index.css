@@ -205,8 +205,17 @@ input, select, textarea { font-family: inherit; }
 .du-data-table tbody tr:hover .du-table-row-num {
   display: none;
 }
+.du-data-table tbody tr .du-table-row-del {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+}
 .du-data-table tbody tr:hover .du-table-row-del {
   opacity: 1 !important;
+  pointer-events: auto;
 }
 .du-data-table tbody tr:hover .du-table-row-del:hover {
   background: rgba(239, 68, 68, 0.1);

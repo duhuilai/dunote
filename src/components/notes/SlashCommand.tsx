@@ -12,6 +12,7 @@ import {
 } from 'react'
 import type { Editor, Range } from '@tiptap/react'
 import { toEmbeddedImageSrc } from '@/utils/imageEmbed'
+import { showPrompt } from '@/utils/prompt'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -147,7 +148,7 @@ const commandItems: SlashCommandItem[] = [
     icon: ImageIcon,
     command: async ({ editor, range }) => {
       editor.chain().focus().deleteRange(range)
-      const url = prompt('输入图片地址:')
+      const url = await showPrompt('输入图片地址:', 'https://')
       if (!url) return
       const src = await toEmbeddedImageSrc(url)
       editor.chain().focus().setImage({ src }).run()

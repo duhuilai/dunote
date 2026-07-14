@@ -8,6 +8,7 @@ import {
   type Column, type Row, type FieldType, type SelectOption, type CellValue,
   FIELD_TYPES, OPTION_COLORS, emptyValueFor, uid,
 } from './fieldTypes'
+import { confirm } from '@tauri-apps/plugin-dialog'
 
 /* ─── 颜色令牌 ─── */
 const C = {
@@ -47,18 +48,19 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   useEffect(() => {
     function onDown(e: MouseEvent) {
       if (!tableWrapRef.current) return
-      if (!tableWrapRef.current.contains(e.target as Node)) {
-        setColMenu(null)
-        setOptEditor(null)
-        setMultiOpen(null)
-        setToolPop(null)
-      }
+    if (!tableWrapRef.current.contains(e.target as Node)) {
+      setColMenu(null)
+      setOptEditor(null)
+      setMultiOpen(null)
+      // 不在此处关闭 toolPop（排序/筛选），其 Popover 自行处理外部点击关闭
+    }
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [])
 
-  /* ── 持久化提交 ── */
+  // 注意：排序/筛选弹层(toolPop)由各自的 Popover 自行处理外部点击关闭，
+  // 不要在这里统一关闭，否则点工具栏按钮会被 mousedown 先关掉再被 click 重开，导致无法关闭/交互异常。
   const commit = (nextCols: Column[], nextRows: Row[]) =>
     updateAttributes({ columns: nextCols, rows: nextRows })
 
@@ -367,7 +369,7 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
           </div>
 
           <div style={{ width: '1px', height: '20px', background: C.border, margin: '0 2px' }} />
-          <ToolBtn onClick={() => { if (confirm('确定删除该智能表格？')) commit([], []) }} icon={<Trash2 size={14} />} label="删除" danger />
+          <ToolBtn onClick={async () => { if (await confirm('确定删除该智能表格？', { title: '删除智能表格' })) commit([], []) }} icon={<Trash2 size={14} />} label="删除" danger />
           {hasActiveView && (
             <button style={{ ...miniBtn, marginLeft: 'auto' }} onClick={() => { setSort(null); setFilters([]) }}>
               重置视图
@@ -414,11 +416,10 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                       padding: 0,
                       textAlign: 'left',
                       position: 'relative',
-                      overflow: 'hidden',
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', height: '38px', padding: '0 8px', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', height: '38px', padding: '0 8px', gap: '4px', overflow: 'hidden' }}>
                       <input
                         value={c.name}
                         onChange={(e) => renameColumn(c.id, e.target.value)}
