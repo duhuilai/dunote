@@ -1005,7 +1005,7 @@ export default function NoteEditor({ note }: NoteEditorProps) {
               {[
                 { format: 'markdown' as ExportFormat, label: 'Markdown', icon: FileText, ext: '.md' },
                 { format: 'html' as ExportFormat, label: 'HTML', icon: FileCode, ext: '.html' },
-                { format: 'word' as ExportFormat, label: 'Word', icon: FileType, ext: '.doc' },
+                { format: 'word' as ExportFormat, label: 'Word', icon: FileType, ext: '.docx' },
                 { format: 'pdf' as ExportFormat, label: 'PDF', icon: FileType, ext: '.pdf' },
               ].map(({ format, label, icon: Icon, ext }) => (
                 <button

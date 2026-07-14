@@ -440,7 +440,7 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
   const exportFormats: { format: ExportFormat; label: string; icon: React.ComponentType<{ size?: number }>; ext: string }[] = [
     { format: 'markdown', label: 'Markdown', icon: FileText, ext: '.md' },
     { format: 'html', label: 'HTML', icon: FileCode, ext: '.html' },
-    { format: 'word', label: 'Word', icon: FileType, ext: '.doc' },
+    { format: 'word', label: 'Word', icon: FileType, ext: '.docx' },
     { format: 'pdf', label: 'PDF', icon: FileType, ext: '.pdf' },
   ]
 

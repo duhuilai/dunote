@@ -1,7 +1,8 @@
 import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
 import { save } from '@tauri-apps/plugin-dialog'
-import { writeTextFile } from '@tauri-apps/plugin-fs'
+import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs'
+import { buildDocx } from './exportWord'
 
 /**
  * Format-specific file filters for the Tauri save dialog
@@ -9,7 +10,7 @@ import { writeTextFile } from '@tauri-apps/plugin-fs'
 const FORMAT_FILTERS: Record<ExportFormat, { name: string; extensions: string[] }> = {
   markdown: { name: 'Markdown', extensions: ['md'] },
   html:     { name: 'HTML',     extensions: ['html', 'htm'] },
-  word:     { name: 'Word',     extensions: ['doc'] },
+  word:     { name: 'Word',     extensions: ['docx'] },
   pdf:      { name: 'PDF',      extensions: ['pdf'] },
 }
 
@@ -40,6 +41,10 @@ function htmlToMarkdown(title: string, htmlContent: string): string {
   })
 
   const markdown = turndownService.turndown(htmlContent)
+  // 内容若已以 H1 标题开头（模板自带），不再重复拼标题，避免标题出现两遍
+  if (/^\s*<h1[\s>]/i.test(htmlContent.trim())) {
+    return markdown
+  }
   return `# ${title}\n\n${markdown}`
 }
 
@@ -47,6 +52,8 @@ function htmlToMarkdown(title: string, htmlContent: string): string {
  * Build a full styled HTML document
  */
 function buildHtmlDocument(title: string, htmlContent: string): string {
+  // 内容若已以 H1 标题开头（模板自带），不再重复拼标题，避免标题出现两遍
+  const titleBlock = /^\s*<h1[\s>]/i.test(htmlContent.trim()) ? '' : `  <h1>${title}</h1>\n`
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -132,96 +139,7 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
   </style>
 </head>
 <body>
-  <h1>${title}</h1>
-  ${htmlContent}
-</body>
-</html>`
-}
-
-/**
- * Build a Word-compatible HTML document (.doc)
- */
-function buildWordDocument(title: string, htmlContent: string): string {
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
-xmlns:w="urn:schemas-microsoft-com:office:word"
-xmlns="http://www.w3.org/TR/REC-html40">
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-  <title>${title}</title>
-  <!--[if gte mso 9]>
-  <xml>
-    <w:WordDocument>
-      <w:View>Print</w:View>
-      <w:Zoom>100</w:Zoom>
-      <w:DoNotOptimizeForBrowser/>
-    </w:WordDocument>
-  </xml>
-  <![endif]-->
-  <style>
-    @page {
-      size: A4;
-      margin: 2.54cm;
-    }
-    body {
-      font-family: 'Calibri', 'Microsoft YaHei', sans-serif;
-      font-size: 11pt;
-      line-height: 1.5;
-      color: #000000;
-    }
-    h1 { font-size: 22pt; font-weight: bold; margin-top: 18pt; margin-bottom: 6pt; }
-    h2 { font-size: 16pt; font-weight: bold; margin-top: 14pt; margin-bottom: 4pt; }
-    h3 { font-size: 13pt; font-weight: bold; margin-top: 12pt; margin-bottom: 4pt; }
-    p { margin: 6pt 0; }
-    table {
-      border-collapse: collapse;
-      width: 100%;
-    }
-    th, td {
-      border: 1px solid #000000;
-      padding: 6px 10px;
-    }
-    th {
-      background-color: #F1F5F9;
-      font-weight: bold;
-    }
-    ul, ol {
-      margin: 6pt 0;
-      padding-left: 24pt;
-    }
-    li { margin: 3pt 0; }
-    code {
-      font-family: 'Consolas', 'Courier New', monospace;
-      font-size: 10pt;
-      background-color: #F1F5F9;
-      padding: 2px 4px;
-    }
-    pre {
-      font-family: 'Consolas', 'Courier New', monospace;
-      font-size: 10pt;
-      background-color: #F1F5F9;
-      padding: 12px;
-      white-space: pre-wrap;
-    }
-    blockquote {
-      border-left: 3pt solid #2563EB;
-      padding-left: 12pt;
-      margin: 12pt 0;
-      color: #64748B;
-    }
-    img {
-      max-width: 100%;
-      height: auto;
-    }
-    a {
-      color: #2563EB;
-      text-decoration: underline;
-    }
-  </style>
-</head>
-<body>
-  <h1>${title}</h1>
-  ${htmlContent}
+  ${titleBlock}  ${htmlContent}
 </body>
 </html>`
 }
@@ -309,8 +227,8 @@ export async function exportNote(
       break
     }
     case 'word': {
-      const wordDoc = buildWordDocument(title, htmlContent)
-      await writeTextFile(filePath, wordDoc)
+      const bytes = await buildDocx(title, htmlContent)
+      await writeFile(filePath, bytes)
       break
     }
   }
