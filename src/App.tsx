@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { getVersion } from '@tauri-apps/api/app'
 import { useAppStore } from '@/store'
+import { loadPersonnel, loadTasks } from '@/utils/storage'
 import { checkForUpdate } from '@/utils/update'
 import Sidebar from '@/components/layout/Sidebar'
 import NotesPage from '@/components/notes/NotesPage'
@@ -21,6 +22,21 @@ function App() {
   useEffect(() => {
     loadSettings()
   }, [loadSettings])
+
+  // 启动时从磁盘加载人员与任务数据（软件更新/重启后不丢）
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const [personnel, tasks] = await Promise.all([loadPersonnel(), loadTasks()])
+      if (cancelled) return
+      const store = useAppStore.getState()
+      store.setPersonnel(personnel)
+      store.setTasks(tasks)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // 启动时获取真实版本号并自动检查更新
   useEffect(() => {

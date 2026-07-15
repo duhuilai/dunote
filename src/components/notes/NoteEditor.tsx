@@ -32,6 +32,39 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.readAsDataURL(file)
   })
 }
+
+/**
+ * 把 HTML 片段中的 blob: 图片（从网页复制图片时常为 <img src="blob:...">）转为 base64 内嵌。
+ * 否则 blob: 地址随会话结束失效，重启/更新后图片丢失。http(s) 跨域可能失败，保留原地址。
+ */
+async function embedHtmlImages(html: string): Promise<string> {
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const imgs = Array.from(doc.querySelectorAll('img'))
+    await Promise.all(
+      imgs.map(async (img) => {
+        const src = img.getAttribute('src') || ''
+        if (!src.startsWith('blob:')) return
+        try {
+          const res = await fetch(src)
+          const blob = await res.blob()
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const r = new FileReader()
+            r.onloadend = () => resolve(r.result as string)
+            r.onerror = () => reject(new Error('readAsDataURL failed'))
+            r.readAsDataURL(blob)
+          })
+          img.setAttribute('src', dataUrl)
+        } catch {
+          /* 转换失败保留原 blob:，不中断整体粘贴 */
+        }
+      }),
+    )
+    return doc.body.innerHTML
+  } catch {
+    return html
+  }
+}
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
   Heading1, Heading2, Heading3,
@@ -165,43 +198,74 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
         const files = Array.from(event.clipboardData?.files ?? []).filter(
           (f) => f.type.startsWith('image/'),
         )
-        if (files.length === 0) return false
-        event.preventDefault()
-        const ed = editorRef.current
-        if (!ed) return true
-        const targetNoteId = editorMetaRef.current.noteId
-        files.forEach(async (file) => {
-          try {
-            const src = await fileToDataUrl(file)
-            // 若粘贴/读取期间已切换到其它文档，丢弃本次插入，避免污染其它笔记
+        if (files.length > 0) {
+          event.preventDefault()
+          const ed = editorRef.current
+          if (!ed) return true
+          const targetNoteId = editorMetaRef.current.noteId
+          files.forEach(async (file) => {
+            try {
+              const src = await fileToDataUrl(file)
+              // 若粘贴/读取期间已切换到其它文档，丢弃本次插入，避免污染其它笔记
+              if (editorMetaRef.current.noteId !== targetNoteId) return
+              ed.chain().focus().setImage({ src }).run()
+            } catch {
+              /* ignore */
+            }
+          })
+          return true
+        }
+        // 剪贴板 HTML 中含 blob: 图片（从网页复制图片时常为 <img src="blob:..."> 的 HTML，
+        // 此时 clipboardData.files 为空，需自行把 blob: 转 base64 再插入）
+        const html = event.clipboardData?.getData('text/html')
+        if (html && /<img[^>]+src\s*=\s*["']?blob:/i.test(html)) {
+          event.preventDefault()
+          const ed = editorRef.current
+          if (!ed) return true
+          const targetNoteId = editorMetaRef.current.noteId
+          embedHtmlImages(html).then((clean) => {
             if (editorMetaRef.current.noteId !== targetNoteId) return
-            ed.chain().focus().setImage({ src }).run()
-          } catch {
-            /* ignore */
-          }
-        })
-        return true
+            ed.chain().focus().insertContent(clean).run()
+          })
+          return true
+        }
+        return false
       },
       handleDrop: (_view, event) => {
         const drag = event as DragEvent
         const files = Array.from(drag.dataTransfer?.files ?? []).filter(
           (f) => f.type.startsWith('image/'),
         )
-        if (files.length === 0) return false
-        event.preventDefault()
-        const ed = editorRef.current
-        if (!ed) return true
-        const targetNoteId = editorMetaRef.current.noteId
-        files.forEach(async (file) => {
-          try {
-            const src = await fileToDataUrl(file)
+        if (files.length > 0) {
+          event.preventDefault()
+          const ed = editorRef.current
+          if (!ed) return true
+          const targetNoteId = editorMetaRef.current.noteId
+          files.forEach(async (file) => {
+            try {
+              const src = await fileToDataUrl(file)
+              if (editorMetaRef.current.noteId !== targetNoteId) return
+              ed.chain().focus().setImage({ src }).run()
+            } catch {
+              /* ignore */
+            }
+          })
+          return true
+        }
+        // 拖入的 HTML 含 blob: 图片，同样转 base64
+        const html = drag.dataTransfer?.getData('text/html')
+        if (html && /<img[^>]+src\s*=\s*["']?blob:/i.test(html)) {
+          event.preventDefault()
+          const ed = editorRef.current
+          if (!ed) return true
+          const targetNoteId = editorMetaRef.current.noteId
+          embedHtmlImages(html).then((clean) => {
             if (editorMetaRef.current.noteId !== targetNoteId) return
-            ed.chain().focus().setImage({ src }).run()
-          } catch {
-            /* ignore */
-          }
-        })
-        return true
+            ed.chain().focus().insertContent(clean).run()
+          })
+          return true
+        }
+        return false
       },
     },
     onUpdate: ({ editor }) => {
@@ -277,21 +341,16 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
     const isLocal = !!(note as any)._isLocalFile
     const path = (note as any).filePath ?? null
 
-    // 已经是当前加载的笔记：仅当“外部内容变化”（非编辑器自身产生）时才重新加载，避免光标跳动
-    if (loadedNoteIdRef.current === targetId) {
-      if (note.content !== lastEmittedRef.current && editor.getHTML() !== note.content) {
-        baselineContentRef.current = note.content || ''
-        editor.commands.setContent(note.content)
-        lastEmittedRef.current = note.content || ''
-      }
-      return
-    }
+    // 同一篇笔记已加载过：不重载，避免光标跳动 / 覆盖自身编辑内容
+    if (loadedNoteIdRef.current === targetId) return
 
-    // 切换到不同笔记（含首次打开）：先把旧笔记里尚未落盘的内容（如刚粘贴的图片）保存到“原笔记”，避免丢失
+    // 切换到不同笔记（含首次打开）：先把旧笔记里尚未落盘的内容（如刚粘贴的图片）保存到原笔记，避免丢失
     flushPending()
 
-    // 本地文件笔记：以磁盘文件为权威，重新读取最新内容。
-    // 否则直接用内存中的 note.content（普通笔记内存即为准；本地文件若用陈旧内存会覆盖磁盘上的新内容）。
+    // 本地文件笔记：以磁盘文件为权威重新读取最新内容。
+    // 普通笔记：内存即为准。
+    // 依赖加入 editor：编辑器首次挂载时 editor 可能为 null，若 effect 提前 return 且依赖不变就再也不会读盘，
+    // 导致软件重启后打开本地笔记显示的是陈旧内存内容（磁盘里其实已有图片）。
     const loadContent = async (): Promise<string> => {
       if (isLocal && path) {
         try {
@@ -310,11 +369,11 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
       // 期间又切走了，放弃本次加载，避免把旧内容覆盖到新笔记
       if (editor.isDestroyed || loadedNoteIdRef.current !== targetId) return
       baselineContentRef.current = content
-      editor.commands.setContent(content)
       lastEmittedRef.current = content
+      editor.commands.setContent(content)
       editorMetaRef.current = { noteId: targetId, isLocal, path }
     })
-  }, [note.id, note.content])
+  }, [editor, note.id])
 
   if (!editor) return null
 

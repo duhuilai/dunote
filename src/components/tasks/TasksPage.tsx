@@ -27,10 +27,21 @@ const statusConfig = {
 }
 
 export default function TasksPage() {
-  const { tasks, updateTask } = useAppStore()
+  const { tasks, updateTask, addTask } = useAppStore()
   const [filter, setFilter] = useState<'all' | 'pending' | 'running' | 'completed'>('all')
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
   const [evalForm, setEvalForm] = useState({ evaluation: '', score: 0 })
+  const [showCreate, setShowCreate] = useState(false)
+  const [createForm, setCreateForm] = useState({
+    name: '',
+    content: '',
+    responsiblePerson: '',
+    participants: '',
+    startTime: '',
+    expectedEndTime: '',
+    status: 'pending' as 'pending' | 'running' | 'completed',
+    progress: 0,
+  })
 
   const filteredTasks = filter === 'all' ? tasks : tasks.filter((t) => t.status === filter)
 
@@ -56,13 +67,49 @@ export default function TasksPage() {
     setEvalForm({ evaluation: '', score: 0 })
   }
 
+  const handleCreate = () => {
+    if (!createForm.name.trim()) return
+    const progress =
+      createForm.status === 'completed' ? 100 : createForm.status === 'running' ? Math.max(createForm.progress, 1) : 0
+    addTask({
+      id: `t-${Date.now()}`,
+      name: createForm.name.trim(),
+      content: createForm.content.trim(),
+      startTime: createForm.startTime,
+      expectedEndTime: createForm.expectedEndTime,
+      responsiblePerson: createForm.responsiblePerson.trim(),
+      participants: createForm.participants
+        .split(/[,，]/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+      status: createForm.status,
+      progress,
+    })
+    setShowCreate(false)
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
       <div style={{ padding: '16px 24px', borderBottom: `1px solid ${colors.border}`, background: colors.surface, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
           <h2 style={{ fontSize: '18px', fontWeight: 700, color: colors.text, margin: 0 }}>任务管理</h2>
-          <button style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+          <button
+            onClick={() => {
+              setCreateForm({
+                name: '',
+                content: '',
+                responsiblePerson: '',
+                participants: '',
+                startTime: '',
+                expectedEndTime: '',
+                status: 'pending',
+                progress: 0,
+              })
+              setShowCreate(true)
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+          >
             <Plus size={15} />
             新建任务
           </button>
@@ -230,6 +277,110 @@ export default function TasksPage() {
           </div>
         </div>
       )}
+
+      {/* Create Task Modal */}
+      {showCreate && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => setShowCreate(false)} />
+          <div style={{ position: 'relative', background: colors.surface, borderRadius: '16px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', width: '600px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `1px solid ${colors.border}` }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, color: colors.text, margin: 0 }}>新建任务</h3>
+              <button onClick={() => setShowCreate(false)} style={{ padding: '4px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>
+                <X size={18} style={{ color: colors.textMuted }} />
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <Field label="任务名称（必填）">
+                <input
+                  value={createForm.name}
+                  onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
+                  style={inputStyle}
+                  placeholder="输入任务名称"
+                  autoFocus
+                />
+              </Field>
+              <Field label="任务描述">
+                <textarea
+                  value={createForm.content}
+                  onChange={(e) => setCreateForm({ ...createForm, content: e.target.value })}
+                  style={{ ...inputStyle, height: '80px', resize: 'none' }}
+                  placeholder="输入任务描述"
+                />
+              </Field>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+                <Field label="负责人">
+                  <input value={createForm.responsiblePerson} onChange={(e) => setCreateForm({ ...createForm, responsiblePerson: e.target.value })} style={inputStyle} placeholder="负责人" />
+                </Field>
+                <Field label="参与人（逗号分隔）">
+                  <input value={createForm.participants} onChange={(e) => setCreateForm({ ...createForm, participants: e.target.value })} style={inputStyle} placeholder="张三, 李四" />
+                </Field>
+                <Field label="开始时间">
+                  <input type="date" value={createForm.startTime} onChange={(e) => setCreateForm({ ...createForm, startTime: e.target.value })} style={inputStyle} />
+                </Field>
+                <Field label="预计完成">
+                  <input type="date" value={createForm.expectedEndTime} onChange={(e) => setCreateForm({ ...createForm, expectedEndTime: e.target.value })} style={inputStyle} />
+                </Field>
+              </div>
+              <Field label="状态">
+                <select value={createForm.status} onChange={(e) => setCreateForm({ ...createForm, status: e.target.value as 'pending' | 'running' | 'completed' })} style={inputStyle}>
+                  <option value="pending">待开始</option>
+                  <option value="running">进行中</option>
+                  <option value="completed">已完成</option>
+                </select>
+              </Field>
+              {createForm.status !== 'completed' && (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary }}>进度</label>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: colors.text }}>{createForm.progress}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={createForm.progress}
+                    onChange={(e) => setCreateForm({ ...createForm, progress: Number(e.target.value) })}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', padding: '16px 24px', borderTop: `1px solid ${colors.border}` }}>
+              <button onClick={() => setShowCreate(false)} style={{ padding: '9px 18px', borderRadius: '8px', border: `1px solid ${colors.border}`, background: colors.surface, color: colors.textSecondary, fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                取消
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={!createForm.name.trim()}
+                style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: createForm.name.trim() ? colors.primary : colors.textMuted, color: '#fff', fontSize: '13px', fontWeight: 500, cursor: createForm.name.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}
+              >
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '8px 12px',
+  borderRadius: '8px',
+  border: `1px solid ${colors.border}`,
+  fontSize: '13px',
+  outline: 'none',
+  boxSizing: 'border-box',
+  fontFamily: 'inherit',
+  color: colors.text,
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      <label style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary }}>{label}</label>
+      {children}
     </div>
   )
 }

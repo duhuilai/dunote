@@ -3,6 +3,7 @@ import type { Note, NoteFolder, NoteHistory, Person, Task, AppSettings, PageKey 
 import type { UpdateInfo, UpdateDownloadState } from '@/utils/update';
 import { initialUpdateDownload } from '@/utils/update';
 import { defaultSettings, loadSettings, saveSettings } from '@/utils/settingsStorage';
+import { savePersonnel, saveTasks } from '@/utils/storage';
 
 interface AppState {
   // Navigation
@@ -47,12 +48,16 @@ interface AppState {
   addPerson: (person: Person) => void;
   updatePerson: (id: string, updates: Partial<Person>) => void;
   deletePerson: (id: string) => void;
+  /** 启动水合：用磁盘数据覆盖内存（不产生额外写入） */
+  setPersonnel: (list: Person[]) => void;
 
   // Tasks
   tasks: Task[];
   addTask: (task: Task) => void;
   updateTask: (id: string, updates: Partial<Task>) => void;
   deleteTask: (id: string) => void;
+  /** 启动水合：用磁盘数据覆盖内存（不产生额外写入） */
+  setTasks: (list: Task[]) => void;
 
   // Settings
   settings: AppSettings;
@@ -181,23 +186,41 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Personnel
   personnel: [],
-  addPerson: (person) => set((s) => ({ personnel: [...s.personnel, person] })),
-  updatePerson: (id, updates) => set((s) => ({
-    personnel: s.personnel.map((p) => (p.id === id ? { ...p, ...updates } : p)),
-  })),
-  deletePerson: (id) => set((s) => ({
-    personnel: s.personnel.filter((p) => p.id !== id),
-  })),
+  addPerson: (person) => {
+    const personnel = [...useAppStore.getState().personnel, person]
+    set({ personnel })
+    savePersonnel(personnel)
+  },
+  updatePerson: (id, updates) => {
+    const personnel = useAppStore.getState().personnel.map((p) => (p.id === id ? { ...p, ...updates } : p))
+    set({ personnel })
+    savePersonnel(personnel)
+  },
+  deletePerson: (id) => {
+    const personnel = useAppStore.getState().personnel.filter((p) => p.id !== id)
+    set({ personnel })
+    savePersonnel(personnel)
+  },
+  setPersonnel: (list) => set({ personnel: list }),
 
   // Tasks
   tasks: [],
-  addTask: (task) => set((s) => ({ tasks: [...s.tasks, task] })),
-  updateTask: (id, updates) => set((s) => ({
-    tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...updates } : t)),
-  })),
-  deleteTask: (id) => set((s) => ({
-    tasks: s.tasks.filter((t) => t.id !== id),
-  })),
+  addTask: (task) => {
+    const tasks = [...useAppStore.getState().tasks, task]
+    set({ tasks })
+    saveTasks(tasks)
+  },
+  updateTask: (id, updates) => {
+    const tasks = useAppStore.getState().tasks.map((t) => (t.id === id ? { ...t, ...updates } : t))
+    set({ tasks })
+    saveTasks(tasks)
+  },
+  deleteTask: (id) => {
+    const tasks = useAppStore.getState().tasks.filter((t) => t.id !== id)
+    set({ tasks })
+    saveTasks(tasks)
+  },
+  setTasks: (list) => set({ tasks: list }),
 
   // Settings
   settings: defaultSettings,
