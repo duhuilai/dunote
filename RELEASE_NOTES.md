@@ -1,12 +1,14 @@
-# v0.1.37
+# v0.1.38
 
-## 人员 / 任务数据持久化（关键修复）
-- **根因**：人员与任务数据只存在于内存（Zustand store），从未写盘，软件更新/重启后全部丢失；且「新建任务」按钮没有点击事件、也无新建弹窗，点了没反应。
+## 修复：切换/重开笔记后整篇内容丢失（严重数据丢失，关键修复）
+- **根因**：本地文件笔记在 `NotesPage.scanDirectory` 中 `content` 被初始化为 `''`，而 `NoteEditor` 首次挂载时 `useEditor({ content: note.content })` 用 `''` 初始化。TipTap 把空内容序列化成 `<p></p>`（非空字符串），但 `baselineContentRef` 初值是 `''`，于是「首次加载前」执行的 `flushPending()` 判定 `content('<p></p>') !== baseline('')`，**把磁盘上的整篇真实内容覆盖成了空段落**。结果：退出软件重新打开、再切换笔记时，整篇内容丢失。
 - **修复**：
-  - 新增统一文件持久化层 `src/utils/storage.ts`，将人员（`personnel.json`）、任务（`tasks.json`）以 JSON 形式存入 Tauri 的 AppConfig 目录（用户 AppData 下，软件更新不会被清除）。
-  - store 的人员/任务增删改均自动写盘；`App.tsx` 启动时从磁盘加载，确保重启/更新后数据不丢。
-  - 任务管理新增「新建任务」弹窗（名称/描述/负责人/参与人/起止时间/状态/进度），提交即创建并持久化。
+  - `sync effect` 在「首次加载」（`loadedNoteIdRef` 仍为 `null`，即之前没有任何笔记被加载过）时**跳过 `flushPending()`**——此时还没发生过任何编辑，无需保存，避免误把磁盘内容清空。
+  - 新增 `persistContent()` 统一落盘逻辑：本地文件笔记**内容为空时不写盘**（`content.trim()` 为假则跳过 `writeTextFile`），作为第二道防线，杜绝把有内容的文件清空成空白。
+  - 切换笔记时的 flush 行为保持不变（非空内容照常落盘，确保编辑不丢）。
 
-## 图片重开后仍丢失（关键修复）
-- **根因**：① 本地文件笔记的读取 effect 依赖为 `[note.id, note.content]` 且开头 `if (!editor) return`——编辑器首次挂载时 `editor` 常为 `null`，导致「从磁盘读盘」分支提前返回且依赖不变、再也不触发，**软件重启后打开笔记不会重新读取磁盘，显示的是陈旧内存内容**（磁盘里其实已有图片）。② 从网页复制图片时剪贴板里是 `<img src="blob:...">` 的 HTML（`clipboardData.files` 为空），原粘贴逻辑不处理，原样存入 `blob:` 地址，重启后失效。
-- **修复**：① `sync effect` 依赖加入 `editor`、用 `loadedNoteIdRef` 控制重载，确保编辑器就绪后一定从磁盘读盘；② 粘贴/拖入新增对 HTML 中 `blob:` 图片转 base64 内嵌，避免 `blob:` 存盘后重启失效。
+## 修复：复制图片后切换/重开，图片丢失、文本正常
+- **根因**：从网页复制图片时，剪贴板里是 `<img src="blob:...">` 的 HTML（`clipboardData.files` 为空）。`blob:` 地址属于**源网页的源**，在 Tauri 的 WebView 中无法跨源访问，`fetch(blob:)` 会失败；原 `embedHtmlImages` 在转换失败时**保留原 `blob:` HTML 写入磁盘**，重启/切换后该地址已失效，于是图片不显示、文本正常。
+- **修复**：
+  - 粘贴/拖入优先从 `clipboardData.files` 与 `clipboardData.items`（`kind === 'file'`）**直接拿到图片真实字节**并转 base64——这种方式跨源可用，不会拿到失效的 `blob:` 地址。
+  - 仅当取不到文件字节、退路处理 HTML 中的 `blob:` 时，才尝试 `fetch` 转 base64；**转换失败的图片直接移除**，绝不在笔记里残留死 `blob:` 链接。

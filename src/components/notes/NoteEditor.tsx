@@ -34,6 +34,28 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 /**
+ * 从剪贴板 / 拖放数据中拿到真实图片字节。
+ * 优先用 files 与 items（kind==='file'）——浏览器在复制网页图片时通常把图片以 item 形式提供，
+ * 这种方式能跨源拿到真实字节，绝不会拿到会失效的 blob: 地址。
+ */
+function getImageFilesFromData(data: DataTransfer): File[] {
+  const files: File[] = []
+  for (const f of Array.from(data.files)) {
+    if (f.type.startsWith('image/')) files.push(f)
+  }
+  const items = (data as any).items as DataTransferItem[] | undefined
+  if (items) {
+    for (const it of Array.from(items)) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        const f = it.getAsFile()
+        if (f) files.push(f)
+      }
+    }
+  }
+  return files
+}
+
+/**
  * 把 HTML 片段中的 blob: 图片（从网页复制图片时常为 <img src="blob:...">）转为 base64 内嵌。
  * 否则 blob: 地址随会话结束失效，重启/更新后图片丢失。http(s) 跨域可能失败，保留原地址。
  */
@@ -56,7 +78,8 @@ async function embedHtmlImages(html: string): Promise<string> {
           })
           img.setAttribute('src', dataUrl)
         } catch {
-          /* 转换失败保留原 blob:，不中断整体粘贴 */
+          // 转换失败：移除该图片，避免残留会失效的 blob: 地址（否则重启/切换后图片丢失）
+          img.remove()
         }
       }),
     )
@@ -195,29 +218,30 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
       },
       // 粘贴 / 拖入图片：转为 base64 内嵌，避免 blob: 临时地址随软件重启或更新丢失
       handlePaste: (_view, event) => {
-        const files = Array.from(event.clipboardData?.files ?? []).filter(
-          (f) => f.type.startsWith('image/'),
-        )
-        if (files.length > 0) {
+        const data = event.clipboardData
+        if (!data) return false
+        // 1) 直接从剪贴板拿到图片真实字节（文件复制 / 网页复制图片常以 item(kind=file) 形式提供，
+        //    可跨源拿到字节，不会拿到会失效的 blob: 地址）
+        const imgFiles = getImageFilesFromData(data)
+        if (imgFiles.length > 0) {
           event.preventDefault()
           const ed = editorRef.current
           if (!ed) return true
           const targetNoteId = editorMetaRef.current.noteId
-          files.forEach(async (file) => {
-            try {
-              const src = await fileToDataUrl(file)
+          Promise.all(imgFiles.map((f) => fileToDataUrl(f).catch(() => null)))
+            .then((srcs) => {
+              const valid = srcs.filter((s): s is string => !!s)
               // 若粘贴/读取期间已切换到其它文档，丢弃本次插入，避免污染其它笔记
-              if (editorMetaRef.current.noteId !== targetNoteId) return
-              ed.chain().focus().setImage({ src }).run()
-            } catch {
-              /* ignore */
-            }
-          })
+              if (editorMetaRef.current.noteId !== targetNoteId || valid.length === 0) return
+              const chain = ed.chain().focus()
+              valid.forEach((src) => chain.setImage({ src }))
+              chain.run()
+            })
           return true
         }
-        // 剪贴板 HTML 中含 blob: 图片（从网页复制图片时常为 <img src="blob:..."> 的 HTML，
-        // 此时 clipboardData.files 为空，需自行把 blob: 转 base64 再插入）
-        const html = event.clipboardData?.getData('text/html')
+        // 2) 退路：剪贴板 HTML 含 blob: 图片（极少数环境取不到文件字节时）。
+        //    把 blob: 转 base64；转换失败的图片直接移除，绝不保留失效的 blob: 地址（否则重启/切换后图片丢失）
+        const html = data.getData('text/html')
         if (html && /<img[^>]+src\s*=\s*["']?blob:/i.test(html)) {
           event.preventDefault()
           const ed = editorRef.current
@@ -233,27 +257,26 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
       },
       handleDrop: (_view, event) => {
         const drag = event as DragEvent
-        const files = Array.from(drag.dataTransfer?.files ?? []).filter(
-          (f) => f.type.startsWith('image/'),
-        )
-        if (files.length > 0) {
+        const data = drag.dataTransfer
+        if (!data) return false
+        const imgFiles = getImageFilesFromData(data)
+        if (imgFiles.length > 0) {
           event.preventDefault()
           const ed = editorRef.current
           if (!ed) return true
           const targetNoteId = editorMetaRef.current.noteId
-          files.forEach(async (file) => {
-            try {
-              const src = await fileToDataUrl(file)
-              if (editorMetaRef.current.noteId !== targetNoteId) return
-              ed.chain().focus().setImage({ src }).run()
-            } catch {
-              /* ignore */
-            }
-          })
+          Promise.all(imgFiles.map((f) => fileToDataUrl(f).catch(() => null)))
+            .then((srcs) => {
+              const valid = srcs.filter((s): s is string => !!s)
+              if (editorMetaRef.current.noteId !== targetNoteId || valid.length === 0) return
+              const chain = ed.chain().focus()
+              valid.forEach((src) => chain.setImage({ src }))
+              chain.run()
+            })
           return true
         }
-        // 拖入的 HTML 含 blob: 图片，同样转 base64
-        const html = drag.dataTransfer?.getData('text/html')
+        // 拖入的 HTML 含 blob: 图片，同样转 base64；转换失败的图片移除
+        const html = data.getData('text/html')
         if (html && /<img[^>]+src\s*=\s*["']?blob:/i.test(html)) {
           event.preventDefault()
           const ed = editorRef.current
@@ -279,17 +302,7 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
         lastEmittedRef.current = content
         // Only save if content actually changed from the baseline (last loaded/saved content)
         if (content !== baselineContentRef.current) {
-          const meta = editorMetaRef.current
-          // Update note in store（始终落到“当前编辑器加载的笔记”，避免闭包 note.id 失效写错笔记）
-          updateNote(meta.noteId, { content })
-          // If this is a local file, write back to source file using Tauri API
-          if (meta.isLocal && meta.path) {
-            writeTextFile(meta.path, content)
-              .then(() => console.log(`[Tauri] Successfully wrote to file: ${meta.path}`))
-              .catch((e) => console.error(`[Tauri] Failed to write to file: ${meta.path}`, e))
-            // 同时同步内存里的 localNotes（selectedNote 来源），否则切回时读到的仍是旧内容
-            onLocalPersistRef.current?.(meta.noteId, content)
-          }
+          persistContent(content)
           // Update baseline after saving
           baselineContentRef.current = content
         }
@@ -299,6 +312,25 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
 
   // Keep editorRef in sync for use inside handleKeyDown (TipTap v3 passes (view, event), not ({editor, event}))
   editorRef.current = editor
+
+  // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、防抖 1.5s 未触发的图片）写入 editorMetaRef 所指的笔记。
+  // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失。
+  const persistContent = useCallback((content: string) => {
+    const meta = editorMetaRef.current
+    // 普通笔记：更新内存 store（本地文件笔记不在 store.notes 中，updateNote 为 no-op）
+    updateNote(meta.noteId, { content })
+    // 本地文件笔记：写磁盘 + 同步内存 localNotes
+    if (meta.isLocal && meta.path) {
+      // 内容为空时不写盘，避免把有内容的文件清空成空白（导致重开后整篇丢失）
+      if (content.trim()) {
+        writeTextFile(meta.path, content)
+          .then(() => console.log(`[Tauri] Wrote to file: ${meta.path}`))
+          .catch((e) => console.error(`[Tauri] Failed to write to file: ${meta.path}`, e))
+        // 同步内存里的 localNotes，避免切回时读到旧内容
+        onLocalPersistRef.current?.(meta.noteId, content)
+      }
+    }
+  }, [updateNote])
 
   // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、防抖 1.5s 未触发的图片）写入 editorMetaRef 所指的笔记。
   // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失。
@@ -316,17 +348,9 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
       return
     }
     if (content === baselineContentRef.current) return
-    const meta = editorMetaRef.current
-    updateNote(meta.noteId, { content })
-    if (meta.isLocal && meta.path) {
-      writeTextFile(meta.path, content)
-        .then(() => console.log(`[Tauri] Flush wrote to file: ${meta.path}`))
-        .catch((e) => console.error(`[Tauri] Flush failed: ${meta.path}`, e))
-      // 同步内存里的 localNotes，避免切回时读到旧内容
-      onLocalPersistRef.current?.(meta.noteId, content)
-    }
+    persistContent(content)
     baselineContentRef.current = content
-  }, [updateNote])
+  }, [persistContent])
 
   // Cleanup: flush pending save on unmount (e.g. closing editor) so last edits aren't lost
   useEffect(() => {
@@ -344,8 +368,14 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
     // 同一篇笔记已加载过：不重载，避免光标跳动 / 覆盖自身编辑内容
     if (loadedNoteIdRef.current === targetId) return
 
-    // 切换到不同笔记（含首次打开）：先把旧笔记里尚未落盘的内容（如刚粘贴的图片）保存到原笔记，避免丢失
-    flushPending()
+    // 首次加载（之前没有任何笔记被加载过）不要 flush：
+    // 此时编辑器刚用 note.content 初始化（本地文件笔记 note.content 为空），
+    // baseline 尚未对齐磁盘真实内容；若此时 flush，会把磁盘整篇内容误写成空段落（<p></p>），
+    // 导致“退出软件重新打开后整篇笔记丢失”。首次加载无需保存，因为还没发生过任何编辑。
+    if (loadedNoteIdRef.current !== null) {
+      // 切换到不同笔记：先把旧笔记里尚未落盘的内容（如刚粘贴的图片）保存到原笔记，避免丢失
+      flushPending()
+    }
 
     // 本地文件笔记：以磁盘文件为权威重新读取最新内容。
     // 普通笔记：内存即为准。
