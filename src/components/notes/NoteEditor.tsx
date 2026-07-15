@@ -46,7 +46,7 @@ import { exportNote, exportToDownloads, type ExportFormat } from '@/utils/export
 import { ExportSaveModal } from './ExportSaveModal'
 import { syncHistoryToRemote, restoreHistoryFromRemote, toRelativePath } from '@/utils/sync'
 import { useAppStore } from '@/store'
-import { writeTextFile } from '@tauri-apps/plugin-fs'
+import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -88,6 +88,9 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
     isLocal: !!(note as any)._isLocalFile,
     path: (note as any).filePath ?? null,
   })
+  // 记录“编辑器已经加载并（对本地文件）从磁盘读取过的最新笔记 id”。
+  // 用于区分“首次/切换进入”与“同一篇的外部变更”：前者以磁盘为权威重新读取，后者仅外部变更才重载，避免光标跳动。
+  const loadedNoteIdRef = useRef<string | null>(null)
   // 让 useEditor 配置闭包里也能拿到最新的 onLocalPersist（避免闭包捕获初始值）
   const onLocalPersistRef = useRef(onLocalPersist)
   onLocalPersistRef.current = onLocalPersist
@@ -270,9 +273,12 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
 
   useEffect(() => {
     if (!editor) return
-    const current = editorMetaRef.current
-    // 同一篇笔记：仅当外部内容变化（非编辑器自身产生）时才重新加载，避免光标跳动
-    if (current.noteId === note.id) {
+    const targetId = note.id
+    const isLocal = !!(note as any)._isLocalFile
+    const path = (note as any).filePath ?? null
+
+    // 已经是当前加载的笔记：仅当“外部内容变化”（非编辑器自身产生）时才重新加载，避免光标跳动
+    if (loadedNoteIdRef.current === targetId) {
       if (note.content !== lastEmittedRef.current && editor.getHTML() !== note.content) {
         baselineContentRef.current = note.content || ''
         editor.commands.setContent(note.content)
@@ -280,19 +286,34 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
       }
       return
     }
-    // 切换到不同笔记：先把旧笔记里尚未落盘的内容（如刚粘贴的图片）保存到“原笔记”，避免丢失
+
+    // 切换到不同笔记（含首次打开）：先把旧笔记里尚未落盘的内容（如刚粘贴的图片）保存到“原笔记”，避免丢失
     flushPending()
-    console.log(`[NoteEditor] Switching note -> ${note.id}, content length: ${note.content?.length || 0}`)
-    // Update baseline BEFORE setContent to prevent onUpdate auto-save from triggering
-    baselineContentRef.current = note.content || ''
-    editor.commands.setContent(note.content)
-    lastEmittedRef.current = note.content || ''
-    editorMetaRef.current = {
-      noteId: note.id,
-      isLocal: !!(note as any)._isLocalFile,
-      path: (note as any).filePath ?? null,
+
+    // 本地文件笔记：以磁盘文件为权威，重新读取最新内容。
+    // 否则直接用内存中的 note.content（普通笔记内存即为准；本地文件若用陈旧内存会覆盖磁盘上的新内容）。
+    const loadContent = async (): Promise<string> => {
+      if (isLocal && path) {
+        try {
+          const disk = await readTextFile(path)
+          if (disk && disk.trim()) return disk
+        } catch (e) {
+          console.warn('[NoteEditor] 读取本地文件失败，回退到内存内容:', e)
+        }
+      }
+      return note.content || ''
     }
-    console.log(`[NoteEditor] Content set and baseline updated`)
+
+    // 先标记正在为 targetId 加载，防止快速切换时重复发起 / 竞态覆盖
+    loadedNoteIdRef.current = targetId
+    loadContent().then((content) => {
+      // 期间又切走了，放弃本次加载，避免把旧内容覆盖到新笔记
+      if (editor.isDestroyed || loadedNoteIdRef.current !== targetId) return
+      baselineContentRef.current = content
+      editor.commands.setContent(content)
+      lastEmittedRef.current = content
+      editorMetaRef.current = { noteId: targetId, isLocal, path }
+    })
   }, [note.id, note.content])
 
   if (!editor) return null
