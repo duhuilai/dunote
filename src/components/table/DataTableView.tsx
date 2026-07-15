@@ -1,5 +1,6 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Plus, Trash2, X, ArrowUpDown, Filter, ArrowUp, ArrowDown,
   BarChart3, MoreHorizontal, GripVertical,
@@ -1142,7 +1143,7 @@ function Popover({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [onClose])
-  return (
+  const content = (
     <div
       ref={ref}
       style={{
@@ -1162,6 +1163,8 @@ function Popover({
       {children}
     </div>
   )
+  if (fixed) return createPortal(content, document.body)
+  return content
 }
 
 /* ─── 样式辅助 ─── */

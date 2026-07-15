@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store'
 import { Users, UserCheck, UserX, Plus, X, Phone, Calendar, DollarSign, Edit3, Trash2 } from 'lucide-react'
+import DateField from '@/components/ui/DateField'
 
 const colors = {
   primary: '#2563EB',
@@ -208,7 +209,20 @@ export default function PersonnelPage() {
               </FormField>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
                 <FormField label="入职日期" icon={<Calendar size={15} />}>
-                  <input type="date" value={form.hireDate} onChange={(e) => setForm({ ...form, hireDate: e.target.value })} style={inputStyle} />
+                  <DateField
+                    value={form.hireDate}
+                    onChange={(v) => setForm({ ...form, hireDate: v })}
+                    placeholder="选择入职日期"
+                    colors={{
+                      text: colors.text,
+                      textMuted: colors.textMuted,
+                      textSecondary: colors.textSecondary,
+                      border: colors.border,
+                      surface: colors.surface,
+                      primary: colors.primary,
+                      bg: colors.bg,
+                    }}
+                  />
                 </FormField>
                 <FormField label="月薪" icon={<DollarSign size={15} />}>
                   <input type="number" value={form.monthlySalary} onChange={(e) => setForm({ ...form, monthlySalary: e.target.value })} style={inputStyle} placeholder="¥" />
