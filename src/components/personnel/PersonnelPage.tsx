@@ -20,26 +20,39 @@ const colors = {
 }
 
 export default function PersonnelPage() {
-  const { personnel, addPerson, deletePerson } = useAppStore()
+  const { personnel, addPerson, updatePerson, deletePerson } = useAppStore()
   const [showModal, setShowModal] = useState(false)
-  const [form, setForm] = useState({ name: '', position: '', hireDate: '', monthlySalary: '', phone: '', status: 'active' as const })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState({ name: '', position: '', hireDate: '', monthlySalary: '', phone: '', status: 'active' as 'active' | 'resigned' })
 
   const activeCount = personnel.filter((p) => p.status === 'active').length
   const resignedCount = personnel.filter((p) => p.status === 'resigned').length
   const totalSalary = personnel.filter((p) => p.status === 'active').reduce((s, p) => s + p.monthlySalary, 0)
 
-  const handleAdd = () => {
+  const handleSave = () => {
     if (!form.name || !form.position) return
-    addPerson({
-      id: `p${Date.now()}`,
-      name: form.name,
-      position: form.position,
-      hireDate: form.hireDate,
-      monthlySalary: Number(form.monthlySalary) || 0,
-      phone: form.phone,
-      status: form.status,
-    })
+    if (editingId) {
+      updatePerson(editingId, {
+        name: form.name,
+        position: form.position,
+        hireDate: form.hireDate,
+        monthlySalary: Number(form.monthlySalary) || 0,
+        phone: form.phone,
+        status: form.status,
+      })
+    } else {
+      addPerson({
+        id: `p${Date.now()}`,
+        name: form.name,
+        position: form.position,
+        hireDate: form.hireDate,
+        monthlySalary: Number(form.monthlySalary) || 0,
+        phone: form.phone,
+        status: form.status,
+      })
+    }
     setForm({ name: '', position: '', hireDate: '', monthlySalary: '', phone: '', status: 'active' })
+    setEditingId(null)
     setShowModal(false)
   }
 
@@ -75,7 +88,11 @@ export default function PersonnelPage() {
       <div style={{ padding: '16px 24px', borderBottom: `1px solid ${colors.border}`, background: colors.surface, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <h2 style={{ fontSize: '18px', fontWeight: 700, color: colors.text, margin: 0 }}>人员管理</h2>
         <button
-          onClick={() => setShowModal(true)}
+          onClick={() => {
+            setEditingId(null)
+            setForm({ name: '', position: '', hireDate: '', monthlySalary: '', phone: '', status: 'active' })
+            setShowModal(true)
+          }}
           style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
         >
           <Plus size={15} />
@@ -135,7 +152,22 @@ export default function PersonnelPage() {
                   </td>
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', gap: '4px' }}>
-                      <button style={{ padding: '6px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }} title="编辑">
+                      <button
+                        onClick={() => {
+                          setEditingId(p.id)
+                          setForm({
+                            name: p.name,
+                            position: p.position,
+                            hireDate: p.hireDate,
+                            monthlySalary: String(p.monthlySalary),
+                            phone: p.phone,
+                            status: p.status,
+                          })
+                          setShowModal(true)
+                        }}
+                        style={{ padding: '6px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}
+                        title="编辑"
+                      >
                         <Edit3 size={14} style={{ color: colors.textMuted }} />
                       </button>
                       <button onClick={() => deletePerson(p.id)} style={{ padding: '6px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }} title="删除">
@@ -156,14 +188,14 @@ export default function PersonnelPage() {
         </div>
       </div>
 
-      {/* Add Modal */}
+      {/* Add/Edit Modal */}
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => setShowModal(false)} />
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => { setShowModal(false); setEditingId(null) }} />
           <div style={{ position: 'relative', background: colors.surface, borderRadius: '16px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', width: '480px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `1px solid ${colors.border}` }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, color: colors.text, margin: 0 }}>新增人员</h3>
-              <button onClick={() => setShowModal(false)} style={{ padding: '4px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, color: colors.text, margin: 0 }}>{editingId ? '编辑人员' : '新增人员'}</h3>
+              <button onClick={() => { setShowModal(false); setEditingId(null) }} style={{ padding: '4px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>
                 <X size={18} style={{ color: colors.textMuted }} />
               </button>
             </div>
@@ -193,8 +225,8 @@ export default function PersonnelPage() {
               </FormField>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', padding: '16px 24px', borderTop: `1px solid ${colors.border}` }}>
-              <button onClick={() => setShowModal(false)} style={{ padding: '8px 16px', borderRadius: '8px', background: colors.bg, color: colors.text, fontSize: '13px', fontWeight: 500, border: `1px solid ${colors.border}`, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
-              <button onClick={handleAdd} style={{ padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>确认添加</button>
+              <button onClick={() => { setShowModal(false); setEditingId(null) }} style={{ padding: '8px 16px', borderRadius: '8px', background: colors.bg, color: colors.text, fontSize: '13px', fontWeight: 500, border: `1px solid ${colors.border}`, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
+              <button onClick={handleSave} style={{ padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>{editingId ? '保存' : '确认添加'}</button>
             </div>
           </div>
         </div>

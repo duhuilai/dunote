@@ -10,6 +10,7 @@ export type FieldType =
   | 'checkbox' // 勾选
   | 'url' // 链接
   | 'rating' // 评分
+  | 'progress' // 进度条
 
 export interface SelectOption {
   id: string
@@ -47,6 +48,7 @@ export const FIELD_TYPES: FieldTypeDef[] = [
   { value: 'checkbox', label: '勾选' },
   { value: 'url', label: '链接' },
   { value: 'rating', label: '评分' },
+  { value: 'progress', label: '进度' },
 ]
 
 /** 单选/多选/人员 可选项配色 */
@@ -74,6 +76,7 @@ export function emptyValueFor(type: FieldType): CellValue {
     case 'person':
       return []
     case 'rating':
+    case 'progress':
       return 0
     default:
       return ''

@@ -38,7 +38,9 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   const [sort, setSort] = useState<SortState>(null)
   const [filters, setFilters] = useState<FilterState[]>([])
   const [colMenu, setColMenu] = useState<string | null>(null)
+  const [colMenuPos, setColMenuPos] = useState<{ left: number; top: number } | null>(null)
   const [optEditor, setOptEditor] = useState<string | null>(null)
+  const [optEditorPos, setOptEditorPos] = useState<{ left: number; top: number } | null>(null)
   const [multiOpen, setMultiOpen] = useState<string | null>(null)
   const [toolPop, setToolPop] = useState<'sort' | 'filter' | null>(null)
 
@@ -157,6 +159,11 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
     )
   }
 
+  function rectOf(el: HTMLElement) {
+    const r = el.getBoundingClientRect()
+    return { left: r.left, top: r.bottom + 4 }
+  }
+
   /* ── 显示行（排序 + 筛选） ── */
   const displayRows = useMemo(() => {
     let list = rows.slice()
@@ -194,14 +201,14 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
     const numberSums: Record<string, { sum: number; count: number }> = {}
     const selectCounts: Record<string, Record<string, number>> = {}
     columns.forEach((c) => {
-      if (c.type === 'number') numberSums[c.id] = { sum: 0, count: 0 }
+      if (c.type === 'number' || c.type === 'progress') numberSums[c.id] = { sum: 0, count: 0 }
       if (c.type === 'select' || c.type === 'multiSelect' || c.type === 'person')
         selectCounts[c.id] = {}
     })
     displayRows.forEach((r) => {
       columns.forEach((c) => {
         const v = getCell(r, c.id)
-        if (c.type === 'number') {
+        if (c.type === 'number' || c.type === 'progress') {
           const n = typeof v === 'number' ? v : parseFloat(String(v))
           if (!isNaN(n)) {
             numberSums[c.id].sum += n
@@ -436,10 +443,12 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                       />
                       <button
                         onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
+                        onClick={(e) => {
                           const open = colMenu === c.id
                           setColMenu(open ? null : c.id)
+                          setColMenuPos(open ? null : rectOf(e.currentTarget))
                           setOptEditor(null)
+                          setOptEditorPos(null)
                           setMultiOpen(null)
                         }}
                         title="列设置"
@@ -456,21 +465,21 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                     />
 
                     {/* 列设置菜单（列名/类型/选项/删除） */}
-                    {colMenu === c.id && (
-                      <Popover onClose={() => setColMenu(null)}>
+                    {colMenu === c.id && colMenuPos && (
+                      <Popover fixed pos={colMenuPos} onClose={() => setColMenu(null)}>
                         <ColMenuContent
                           col={c}
                           onRename={(n) => renameColumn(c.id, n)}
                           onChangeType={(t) => changeColumnType(c.id, t)}
-                          onManageOptions={() => { setOptEditor(c.id); setColMenu(null) }}
+                          onManageOptions={() => { setOptEditor(c.id); setOptEditorPos(colMenuPos); setColMenu(null); setColMenuPos(null) }}
                           onDelete={() => deleteColumn(c.id)}
                         />
                       </Popover>
                     )}
 
                     {/* 选项编辑 */}
-                    {optEditor === c.id && (
-                      <Popover onClose={() => setOptEditor(null)}>
+                    {optEditor === c.id && optEditorPos && (
+                      <Popover fixed pos={optEditorPos} onClose={() => setOptEditor(null)}>
                         <OptionEditor
                           col={c}
                           onChange={(opts) => setColumnOptions(c.id, opts)}
@@ -1025,6 +1034,41 @@ function CellEditor({
     )
   }
 
+  if (t === 'progress') {
+    const n = typeof value === 'number' ? value : Number(value) || 0
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div
+          style={{
+            flex: 1,
+            height: '8px',
+            background: C.border,
+            borderRadius: '9999px',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              height: '100%',
+              borderRadius: '9999px',
+              background: C.primary,
+              width: `${Math.max(0, Math.min(100, n))}%`,
+            }}
+          />
+        </div>
+        <input
+          type="number"
+          min={0}
+          max={100}
+          value={n}
+          onChange={(e) => onChange(e.target.value === '' ? 0 : Math.max(0, Math.min(100, Number(e.target.value))))}
+          style={{ ...cellInputStyle, width: '44px', textAlign: 'right' }}
+        />
+        <span style={{ fontSize: '11px', color: C.textMuted }}>%</span>
+      </div>
+    )
+  }
+
   if (t === 'date') {
     return <DateField value={(value as string) || ''} onChange={(v) => onChange(v)} />
   }
@@ -1067,7 +1111,7 @@ function compareValues(a: CellValue, b: CellValue, t: FieldType): number {
   if (ea && eb) return 0
   if (ea) return 1
   if (eb) return -1
-  if (t === 'number') return (Number(a) || 0) - (Number(b) || 0)
+  if (t === 'number' || t === 'progress') return (Number(a) || 0) - (Number(b) || 0)
   if (t === 'date') {
     const da = Date.parse(String(a))
     const db = Date.parse(String(b))
@@ -1079,7 +1123,17 @@ function compareValues(a: CellValue, b: CellValue, t: FieldType): number {
 }
 
 /* ─── Popover ─── */
-function Popover({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+function Popover({
+  children,
+  onClose,
+  fixed,
+  pos,
+}: {
+  children: React.ReactNode
+  onClose: () => void
+  fixed?: boolean
+  pos?: { left: number; top: number } | null
+}) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     function onDown(e: MouseEvent) {
@@ -1092,11 +1146,10 @@ function Popover({ children, onClose }: { children: React.ReactNode; onClose: ()
     <div
       ref={ref}
       style={{
-        position: 'absolute',
-        top: '100%',
-        right: 0,
-        marginTop: '6px',
-        zIndex: 60,
+        position: fixed ? 'fixed' : 'absolute',
+        ...(fixed && pos ? { left: pos.left, top: pos.top } : { top: '100%', right: 0 }),
+        marginTop: fixed ? 0 : '6px',
+        zIndex: 200,
         background: C.surface,
         border: `1px solid ${C.border}`,
         borderRadius: '8px',

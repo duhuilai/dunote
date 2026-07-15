@@ -42,6 +42,17 @@ export default function TasksPage() {
     status: 'pending' as 'pending' | 'running' | 'completed',
     progress: 0,
   })
+  const [isEditing, setIsEditing] = useState(false)
+  const [editForm, setEditForm] = useState({
+    name: '',
+    content: '',
+    responsiblePerson: '',
+    participants: [] as string[],
+    startTime: '',
+    expectedEndTime: '',
+    status: 'pending' as 'pending' | 'running' | 'completed',
+    progress: 0,
+  })
 
   const filteredTasks = filter === 'all' ? tasks : tasks.filter((t) => t.status === filter)
 
@@ -65,6 +76,42 @@ export default function TasksPage() {
     })
     setSelectedTask(null)
     setEvalForm({ evaluation: '', score: 0 })
+  }
+
+  const startEdit = () => {
+    if (!task) return
+    setEditForm({
+      name: task.name,
+      content: task.content,
+      responsiblePerson: task.responsiblePerson,
+      participants: task.participants.slice(),
+      startTime: task.startTime,
+      expectedEndTime: task.expectedEndTime,
+      status: task.status,
+      progress: task.progress,
+    })
+    setIsEditing(true)
+  }
+
+  const handleSaveEdit = () => {
+    if (!task || !editForm.name.trim()) return
+    const progress =
+      editForm.status === 'completed'
+        ? 100
+        : editForm.status === 'running'
+          ? Math.max(editForm.progress, 1)
+          : 0
+    updateTask(task.id, {
+      name: editForm.name.trim(),
+      content: editForm.content.trim(),
+      responsiblePerson: editForm.responsiblePerson,
+      participants: editForm.participants,
+      startTime: editForm.startTime,
+      expectedEndTime: editForm.expectedEndTime,
+      status: editForm.status,
+      progress,
+    })
+    setIsEditing(false)
   }
 
   const handleCreate = () => {
@@ -195,80 +242,201 @@ export default function TasksPage() {
       {/* Task Detail Modal */}
       {task && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => { setSelectedTask(null); setEvalForm({ evaluation: '', score: 0 }) }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => { setSelectedTask(null); setEvalForm({ evaluation: '', score: 0 }); setIsEditing(false) }} />
           <div style={{ position: 'relative', background: colors.surface, borderRadius: '16px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', width: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `1px solid ${colors.border}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {(() => { const I = statusConfig[task.status].icon; return <I size={18} style={{ color: statusConfig[task.status].color }} /> })()}
                 <h3 style={{ fontSize: '16px', fontWeight: 600, color: colors.text, margin: 0 }}>{task.name}</h3>
               </div>
-              <button onClick={() => { setSelectedTask(null); setEvalForm({ evaluation: '', score: 0 }) }} style={{ padding: '4px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>
-                <X size={18} style={{ color: colors.textMuted }} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {!isEditing && (
+                  <button
+                    onClick={startEdit}
+                    style={{ padding: '6px 12px', borderRadius: '6px', border: `1px solid ${colors.border}`, background: colors.surface, color: colors.text, fontSize: '12px', cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    编辑
+                  </button>
+                )}
+                <button onClick={() => { setSelectedTask(null); setEvalForm({ evaluation: '', score: 0 }); setIsEditing(false) }} style={{ padding: '4px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>
+                  <X size={18} style={{ color: colors.textMuted }} />
+                </button>
+              </div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div>
-                <label style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary, marginBottom: '4px', display: 'block' }}>任务描述</label>
-                <p style={{ fontSize: '13px', color: colors.text, lineHeight: 1.6, margin: 0 }}>{task.content}</p>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-                <InfoRow icon={<User size={14} />} label="负责人" value={task.responsiblePerson} />
-                <InfoRow icon={<UsersIcon size={14} />} label="参与人" value={task.participants.join(', ') || '无'} />
-                <InfoRow icon={<Calendar size={14} />} label="开始时间" value={task.startTime} />
-                <InfoRow icon={<Calendar size={14} />} label="预计完成" value={task.expectedEndTime} />
-                {task.completionDate && <InfoRow icon={<CheckCircle2 size={14} />} label="实际完成" value={task.completionDate} />}
-              </div>
-              {/* Progress */}
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <label style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary }}>进度</label>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: colors.text }}>{task.progress}%</span>
-                </div>
-                <div style={{ height: '10px', background: colors.bg, borderRadius: '9999px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', borderRadius: '9999px', background: task.status === 'completed' ? colors.success : colors.primary, width: `${task.progress}%` }} />
-                </div>
-              </div>
-
-              {/* Evaluation (for completed tasks) */}
-              {task.status === 'completed' && task.evaluation && (
-                <div style={{ padding: '16px', background: colors.successLight, borderRadius: '12px', border: `1px solid #A7F3D0` }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                    <Star size={14} style={{ color: colors.warning }} />
-                    <span style={{ fontSize: '12px', fontWeight: 600, color: colors.text }}>评价</span>
-                    {task.score && <span style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: 700, color: colors.primary }}>{task.score} 分</span>}
-                  </div>
-                  <p style={{ fontSize: '13px', color: colors.textSecondary, margin: 0 }}>{task.evaluation}</p>
-                </div>
-              )}
-
-              {/* Complete form (for running tasks) */}
-              {task.status === 'running' && (
-                <div style={{ padding: '16px', background: colors.bg, borderRadius: '12px', border: `1px solid ${colors.border}` }}>
-                  <label style={{ fontSize: '12px', fontWeight: 600, color: colors.text, marginBottom: '12px', display: 'block' }}>完成任务</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <textarea
-                      value={evalForm.evaluation}
-                      onChange={(e) => setEvalForm({ ...evalForm, evaluation: e.target.value })}
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: `1px solid ${colors.border}`, fontSize: '13px', outline: 'none', resize: 'none', height: '80px', fontFamily: 'inherit', boxSizing: 'border-box' }}
-                      placeholder="填写任务评价..."
+              {isEditing ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <Field label="任务名称（必填）">
+                    <input
+                      value={editForm.name}
+                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      style={inputStyle}
+                      placeholder="输入任务名称"
+                      autoFocus
                     />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <label style={{ fontSize: '12px', color: colors.textSecondary }}>评分:</label>
+                  </Field>
+                  <Field label="任务描述">
+                    <textarea
+                      value={editForm.content}
+                      onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
+                      style={{ ...inputStyle, height: '80px', resize: 'none' }}
+                      placeholder="输入任务描述"
+                    />
+                  </Field>
+                  <Field label="负责人">
+                    <select
+                      value={editForm.responsiblePerson}
+                      onChange={(e) => setEditForm({ ...editForm, responsiblePerson: e.target.value })}
+                      style={inputStyle}
+                    >
+                      <option value="">未指定</option>
+                      {personnel.map((p) => (
+                        <option key={p.id} value={p.name}>{p.name}{p.position ? `（${p.position}）` : ''}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="参与人（可多选）">
+                    {personnel.length === 0 ? (
+                      <span style={{ fontSize: '12px', color: colors.textMuted }}>暂无人员，请先在「人员管理」中添加</span>
+                    ) : (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '10px', border: `1px solid ${colors.border}`, borderRadius: '8px', maxHeight: '132px', overflowY: 'auto' }}>
+                        {personnel.map((p) => {
+                          const checked = editForm.participants.includes(p.name)
+                          return (
+                            <label
+                              key={p.id}
+                              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '9999px', border: `1px solid ${checked ? colors.primary : colors.border}`, background: checked ? colors.primaryLight : colors.surface, cursor: 'pointer', fontSize: '12px', color: checked ? colors.primary : colors.text, fontWeight: checked ? 500 : 400 }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() =>
+                                  setEditForm((f) => ({
+                                    ...f,
+                                    participants: checked
+                                      ? f.participants.filter((n) => n !== p.name)
+                                      : [...f.participants, p.name],
+                                  }))
+                                }
+                                style={{ margin: 0, cursor: 'pointer' }}
+                              />
+                              {p.name}
+                            </label>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </Field>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+                    <Field label="开始时间">
+                      <input type="date" value={editForm.startTime} onChange={(e) => setEditForm({ ...editForm, startTime: e.target.value })} style={inputStyle} />
+                    </Field>
+                    <Field label="预计完成">
+                      <input type="date" value={editForm.expectedEndTime} onChange={(e) => setEditForm({ ...editForm, expectedEndTime: e.target.value })} style={inputStyle} />
+                    </Field>
+                  </div>
+                  <Field label="状态">
+                    <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value as 'pending' | 'running' | 'completed' })} style={inputStyle}>
+                      <option value="pending">待开始</option>
+                      <option value="running">进行中</option>
+                      <option value="completed">已完成</option>
+                    </select>
+                  </Field>
+                  {editForm.status !== 'completed' && (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <label style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary }}>进度</label>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: colors.text }}>{editForm.progress}%</span>
+                      </div>
                       <input
                         type="range"
                         min="0"
                         max="100"
-                        value={evalForm.score}
-                        onChange={(e) => setEvalForm({ ...evalForm, score: Number(e.target.value) })}
-                        style={{ flex: 1 }}
+                        value={editForm.progress}
+                        onChange={(e) => setEditForm({ ...editForm, progress: Number(e.target.value) })}
+                        style={{ width: '100%' }}
                       />
-                      <span style={{ fontSize: '14px', fontWeight: 700, color: colors.primary, width: '40px', textAlign: 'right' }}>{evalForm.score}</span>
                     </div>
-                    <button onClick={handleComplete} style={{ width: '100%', padding: '10px', borderRadius: '8px', background: colors.success, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
-                      确认完成
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '8px' }}>
+                    <button onClick={() => setIsEditing(false)} style={{ padding: '9px 18px', borderRadius: '8px', border: `1px solid ${colors.border}`, background: colors.surface, color: colors.textSecondary, fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                      取消
+                    </button>
+                    <button
+                      onClick={handleSaveEdit}
+                      disabled={!editForm.name.trim()}
+                      style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: editForm.name.trim() ? colors.primary : colors.textMuted, color: '#fff', fontSize: '13px', fontWeight: 500, cursor: editForm.name.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}
+                    >
+                      保存
                     </button>
                   </div>
                 </div>
+              ) : (
+                <>
+                  <div>
+                    <label style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary, marginBottom: '4px', display: 'block' }}>任务描述</label>
+                    <p style={{ fontSize: '13px', color: colors.text, lineHeight: 1.6, margin: 0 }}>{task.content}</p>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+                    <InfoRow icon={<User size={14} />} label="负责人" value={task.responsiblePerson} />
+                    <InfoRow icon={<UsersIcon size={14} />} label="参与人" value={task.participants.join(', ') || '无'} />
+                    <InfoRow icon={<Calendar size={14} />} label="开始时间" value={task.startTime} />
+                    <InfoRow icon={<Calendar size={14} />} label="预计完成" value={task.expectedEndTime} />
+                    {task.completionDate && <InfoRow icon={<CheckCircle2 size={14} />} label="实际完成" value={task.completionDate} />}
+                  </div>
+                  {/* Progress */}
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <label style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary }}>进度</label>
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: colors.text }}>{task.progress}%</span>
+                    </div>
+                    <div style={{ height: '10px', background: colors.bg, borderRadius: '9999px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', borderRadius: '9999px', background: task.status === 'completed' ? colors.success : colors.primary, width: `${task.progress}%` }} />
+                    </div>
+                  </div>
+
+                  {/* Evaluation (for completed tasks) */}
+                  {task.status === 'completed' && task.evaluation && (
+                    <div style={{ padding: '16px', background: colors.successLight, borderRadius: '12px', border: `1px solid #A7F3D0` }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <Star size={14} style={{ color: colors.warning }} />
+                        <span style={{ fontSize: '12px', fontWeight: 600, color: colors.text }}>评价</span>
+                        {task.score && <span style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: 700, color: colors.primary }}>{task.score} 分</span>}
+                      </div>
+                      <p style={{ fontSize: '13px', color: colors.textSecondary, margin: 0 }}>{task.evaluation}</p>
+                    </div>
+                  )}
+
+                  {/* Complete form (for running tasks) */}
+                  {task.status === 'running' && (
+                    <div style={{ padding: '16px', background: colors.bg, borderRadius: '12px', border: `1px solid ${colors.border}` }}>
+                      <label style={{ fontSize: '12px', fontWeight: 600, color: colors.text, marginBottom: '12px', display: 'block' }}>完成任务</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <textarea
+                          value={evalForm.evaluation}
+                          onChange={(e) => setEvalForm({ ...evalForm, evaluation: e.target.value })}
+                          style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: `1px solid ${colors.border}`, fontSize: '13px', outline: 'none', resize: 'none', height: '80px', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                          placeholder="填写任务评价..."
+                        />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <label style={{ fontSize: '12px', color: colors.textSecondary }}>评分:</label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={evalForm.score}
+                            onChange={(e) => setEvalForm({ ...evalForm, score: Number(e.target.value) })}
+                            style={{ flex: 1 }}
+                          />
+                          <span style={{ fontSize: '14px', fontWeight: 700, color: colors.primary, width: '40px', textAlign: 'right' }}>{evalForm.score}</span>
+                        </div>
+                        <button onClick={handleComplete} style={{ width: '100%', padding: '10px', borderRadius: '8px', background: colors.success, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+                          确认完成
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
