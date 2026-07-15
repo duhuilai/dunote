@@ -125,9 +125,11 @@ interface NoteEditorProps {
   note: Note
   /** 本地文件笔记落盘后，同步更新内存中的 localNotes（selectedNote 来源），避免切回时读到旧内容导致图片丢失 */
   onLocalPersist?: (noteId: string, content: string) => void
+  /** 外部强制重载信号：恢复历史后 +1，让当前笔记（note.id 不变）重新从磁盘/内存加载最新内容 */
+  reloadToken?: number
 }
 
-export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
+export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: NoteEditorProps) {
   const { updateNote, addHistoryEntry, setShowHistory, settings, showToast, mergeRemoteHistory, localRootFolder, appVersion } = useAppStore()
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [exportTarget, setExportTarget] = useState<{ format: ExportFormat; title: string; html: string } | null>(null)
@@ -147,6 +149,8 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
   // 记录“编辑器已经加载并（对本地文件）从磁盘读取过的最新笔记 id”。
   // 用于区分“首次/切换进入”与“同一篇的外部变更”：前者以磁盘为权威重新读取，后者仅外部变更才重载，避免光标跳动。
   const loadedNoteIdRef = useRef<string | null>(null)
+  // 记录已处理过的 reloadToken，用于检测“恢复历史”等外部强制重载信号
+  const reloadTokenRef = useRef<number>(reloadToken)
   // 让 useEditor 配置闭包里也能拿到最新的 onLocalPersist（避免闭包捕获初始值）
   const onLocalPersistRef = useRef(onLocalPersist)
   onLocalPersistRef.current = onLocalPersist
@@ -160,7 +164,9 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder: '输入/显示菜单或直接录入' }),
-      Image,
+      // allowBase64 必须为 true：否则 TipTap 从 HTML 解析（setContent）时会丢弃 data:image/...;base64 图片，
+      // 导致切换/重启后重新加载磁盘内容时图片消失（文本正常）。首次用 setImage 命令插入不受此限制，故只在重载时暴露。
+      Image.configure({ allowBase64: true }),
       Link.configure({ openOnClick: false }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -365,14 +371,20 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
     const isLocal = !!(note as any)._isLocalFile
     const path = (note as any).filePath ?? null
 
-    // 同一篇笔记已加载过：不重载，避免光标跳动 / 覆盖自身编辑内容
-    if (loadedNoteIdRef.current === targetId) return
+    // 检测外部强制重载信号（恢复历史）：token 变化时即使是同一篇笔记也要重新加载
+    const forceReload = reloadTokenRef.current !== reloadToken
+    reloadTokenRef.current = reloadToken
+
+    // 同一篇笔记已加载过且无强制重载信号：不重载，避免光标跳动 / 覆盖自身编辑内容
+    if (loadedNoteIdRef.current === targetId && !forceReload) return
 
     // 首次加载（之前没有任何笔记被加载过）不要 flush：
     // 此时编辑器刚用 note.content 初始化（本地文件笔记 note.content 为空），
     // baseline 尚未对齐磁盘真实内容；若此时 flush，会把磁盘整篇内容误写成空段落（<p></p>），
     // 导致“退出软件重新打开后整篇笔记丢失”。首次加载无需保存，因为还没发生过任何编辑。
-    if (loadedNoteIdRef.current !== null) {
+    // 恢复历史（forceReload）时不 flush：意图就是丢弃当前编辑器内容、加载历史内容，
+    // 若此时 flush 反而会把编辑器旧内容写回、覆盖刚恢复的磁盘/内存内容。
+    if (loadedNoteIdRef.current !== null && !forceReload) {
       // 切换到不同笔记：先把旧笔记里尚未落盘的内容（如刚粘贴的图片）保存到原笔记，避免丢失
       flushPending()
     }
@@ -403,7 +415,7 @@ export default function NoteEditor({ note, onLocalPersist }: NoteEditorProps) {
       editor.commands.setContent(content)
       editorMetaRef.current = { noteId: targetId, isLocal, path }
     })
-  }, [editor, note.id])
+  }, [editor, note.id, reloadToken])
 
   if (!editor) return null
 

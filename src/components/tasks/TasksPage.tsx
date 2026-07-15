@@ -27,7 +27,7 @@ const statusConfig = {
 }
 
 export default function TasksPage() {
-  const { tasks, updateTask, addTask } = useAppStore()
+  const { tasks, updateTask, addTask, personnel } = useAppStore()
   const [filter, setFilter] = useState<'all' | 'pending' | 'running' | 'completed'>('all')
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
   const [evalForm, setEvalForm] = useState({ evaluation: '', score: 0 })
@@ -36,7 +36,7 @@ export default function TasksPage() {
     name: '',
     content: '',
     responsiblePerson: '',
-    participants: '',
+    participants: [] as string[],
     startTime: '',
     expectedEndTime: '',
     status: 'pending' as 'pending' | 'running' | 'completed',
@@ -77,11 +77,8 @@ export default function TasksPage() {
       content: createForm.content.trim(),
       startTime: createForm.startTime,
       expectedEndTime: createForm.expectedEndTime,
-      responsiblePerson: createForm.responsiblePerson.trim(),
-      participants: createForm.participants
-        .split(/[,，]/)
-        .map((s) => s.trim())
-        .filter(Boolean),
+      responsiblePerson: createForm.responsiblePerson,
+      participants: createForm.participants,
       status: createForm.status,
       progress,
     })
@@ -100,7 +97,7 @@ export default function TasksPage() {
                 name: '',
                 content: '',
                 responsiblePerson: '',
-                participants: '',
+                participants: [],
                 startTime: '',
                 expectedEndTime: '',
                 status: 'pending',
@@ -307,13 +304,51 @@ export default function TasksPage() {
                   placeholder="输入任务描述"
                 />
               </Field>
+              <Field label="负责人">
+                <select
+                  value={createForm.responsiblePerson}
+                  onChange={(e) => setCreateForm({ ...createForm, responsiblePerson: e.target.value })}
+                  style={inputStyle}
+                >
+                  <option value="">未指定</option>
+                  {personnel.map((p) => (
+                    <option key={p.id} value={p.name}>{p.name}{p.position ? `（${p.position}）` : ''}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="参与人（可多选）">
+                {personnel.length === 0 ? (
+                  <span style={{ fontSize: '12px', color: colors.textMuted }}>暂无人员，请先在「人员管理」中添加</span>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', padding: '10px', border: `1px solid ${colors.border}`, borderRadius: '8px', maxHeight: '132px', overflowY: 'auto' }}>
+                    {personnel.map((p) => {
+                      const checked = createForm.participants.includes(p.name)
+                      return (
+                        <label
+                          key={p.id}
+                          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '9999px', border: `1px solid ${checked ? colors.primary : colors.border}`, background: checked ? colors.primaryLight : colors.surface, cursor: 'pointer', fontSize: '12px', color: checked ? colors.primary : colors.text, fontWeight: checked ? 500 : 400 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setCreateForm((f) => ({
+                                ...f,
+                                participants: checked
+                                  ? f.participants.filter((n) => n !== p.name)
+                                  : [...f.participants, p.name],
+                              }))
+                            }
+                            style={{ margin: 0, cursor: 'pointer' }}
+                          />
+                          {p.name}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </Field>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-                <Field label="负责人">
-                  <input value={createForm.responsiblePerson} onChange={(e) => setCreateForm({ ...createForm, responsiblePerson: e.target.value })} style={inputStyle} placeholder="负责人" />
-                </Field>
-                <Field label="参与人（逗号分隔）">
-                  <input value={createForm.participants} onChange={(e) => setCreateForm({ ...createForm, participants: e.target.value })} style={inputStyle} placeholder="张三, 李四" />
-                </Field>
                 <Field label="开始时间">
                   <input type="date" value={createForm.startTime} onChange={(e) => setCreateForm({ ...createForm, startTime: e.target.value })} style={inputStyle} />
                 </Field>

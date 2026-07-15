@@ -737,6 +737,8 @@ export default function NotesPage() {
   const [selectedLocalFolder, setSelectedLocalFolder] = useState<string | null>(null)
   const [localFolders, setLocalFolders] = useState<import('@/types').NoteFolder[]>([])
   const [localNotes, setLocalNotes] = useState<import('@/types').Note[]>([])
+  // 恢复历史后 +1，强制 NoteEditor 重新加载当前笔记内容（note.id 不变时也刷新）
+  const [reloadToken, setReloadToken] = useState(0)
 
   // 将当前打开的本地根文件夹同步到全局 store，供 Gitee 同步按相对路径分层存储
   const setLocalRootFolder = useAppStore((s) => s.setLocalRootFolder)
@@ -1168,9 +1170,14 @@ export default function NotesPage() {
 
   // Handler for restoring a history version of a local file
   const handleRestoreLocalNote = useCallback(async (noteId: string, content: string, title: string) => {
+    // 该回调对普通笔记与本地笔记都会被 HistoryModal 调用。
     const localNote = localNotes.find(n => n.id === noteId)
-    if (!localNote?._isLocalFile || !localNote.filePath) return
-    
+    if (!localNote?._isLocalFile || !localNote.filePath) {
+      // 普通笔记：store.restoreFromHistory 已在此回调前同步更新内容，直接 bump 让编辑器立即刷新
+      setReloadToken((t) => t + 1)
+      return
+    }
+
     // Create history entry with the CURRENT content (before restore) since
     // restoreFromHistory can't find local files in the Zustand store
     const currentContent = localNote.content || ''
@@ -1189,6 +1196,8 @@ export default function NotesPage() {
       setLocalNotes(prev => prev.map(n =>
         n.id === noteId ? { ...n, content, updatedAt: new Date().toISOString() } : n
       ))
+      // 本地笔记：必须在写盘成功后再 bump，否则编辑器 effect 读盘可能早于写盘，读到旧内容
+      setReloadToken((t) => t + 1)
     } catch (error) {
       console.error('[Restore] Failed to write restored content:', error)
     }
@@ -1621,7 +1630,7 @@ export default function NotesPage() {
         }}
       >
         {selectedNote ? (
-          <NoteEditor note={selectedNote} onLocalPersist={handleLocalNotePersist} />
+          <NoteEditor note={selectedNote} onLocalPersist={handleLocalNotePersist} reloadToken={reloadToken} />
         ) : (
           <div
             style={{
