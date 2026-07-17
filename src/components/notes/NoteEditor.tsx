@@ -20,7 +20,7 @@ import { FontSize } from '@/extensions/FontSize'
 import { SlashCommand } from './SlashCommand'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { showPrompt } from '@/utils/prompt'
-import { toEmbeddedImageSrc } from '@/utils/imageEmbed'
+import { pickImageFile } from '@/utils/imageEmbed'
 import type { Note } from '@/types'
 
 /* ─── 将图片文件转为 dataURL（base64），用于把粘贴/拖入的图片内嵌进笔记，避免 blob: 临时地址丢失 ─── */
@@ -1110,12 +1110,11 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
         </ToolBtn>
         <ToolBtn
           onClick={async () => {
-            const url = await showPrompt('输入图片地址:', 'https://')
-            if (!url) return
-            const src = await toEmbeddedImageSrc(url)
+            const src = await pickImageFile()
+            if (!src) return
             editor.chain().focus().setImage({ src }).run()
           }}
-          title="图片（自动保存到笔记内）"
+          title="图片（从本地选择并自动保存到笔记内）"
         >
           <ImageIcon size={16} />
         </ToolBtn>

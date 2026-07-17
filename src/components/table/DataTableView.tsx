@@ -1159,6 +1159,7 @@ function Popover({
         minWidth: '160px',
       }}
       onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
     >
       {children}
     </div>

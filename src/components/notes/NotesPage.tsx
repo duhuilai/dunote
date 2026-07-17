@@ -14,6 +14,7 @@ import { readDir, readTextFile, writeTextFile, mkdir, exists, remove } from '@ta
 import { appConfigDir, join, dirname } from '@tauri-apps/api/path'
 import { open as shellOpen } from '@tauri-apps/plugin-shell'
 import { marked } from 'marked'
+import { loadNoteTypes, saveNoteType, toRelPath } from '@/utils/noteMeta'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -398,10 +399,11 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
 }
 
 /* ─── Context Menu ─── */
-function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
-  x: number; y: number; note: any; onClose: () => void; onDelete: (note: any) => void; onRevealFile?: (filePath: string) => void
+function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile, onChangeType }: {
+  x: number; y: number; note: any; onClose: () => void; onDelete: (note: any) => void; onRevealFile?: (filePath: string) => void; onChangeType?: (note: any, type: string) => void
 }) {
   const [showExportSubmenu, setShowExportSubmenu] = useState(false)
+  const [showTypeSubmenu, setShowTypeSubmenu] = useState(false)
   const [exportTarget, setExportTarget] = useState<{ format: ExportFormat; title: string; html: string } | null>(null)
   const showToast = useAppStore((s) => s.showToast)
 
@@ -435,7 +437,7 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
   const menuItems = [
     { icon: Download, label: '导出为...', action: () => setShowExportSubmenu(true), hasSubmenu: true, danger: false },
     { icon: FolderOpen, label: '在文件夹查看', action: () => { if (note?.filePath) onRevealFile?.(note.filePath); onClose() }, danger: false, show: canReveal },
-    { icon: Edit3, label: '重命名', action: () => {}, danger: false },
+    { icon: Edit3, label: '修改笔记类型', action: () => setShowTypeSubmenu(true), hasSubmenu: true, danger: false },
     { icon: Trash2, label: '删除', action: () => onDelete(note), danger: true },
   ]
 
@@ -460,7 +462,7 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
         zIndex: 50,
         minWidth: '180px',
       }}
-      onMouseLeave={() => { setShowExportSubmenu(false); onClose() }}
+      onMouseLeave={() => { setShowExportSubmenu(false); setShowTypeSubmenu(false); onClose() }}
     >
       {menuItems.filter(m => m.show !== false).map(({ icon: Icon, label, action, hasSubmenu, danger }) => (
         <div key={label} style={{ position: 'relative' }}>
@@ -494,7 +496,7 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
           </button>
 
           {/* Export Submenu */}
-          {hasSubmenu && showExportSubmenu && (
+          {hasSubmenu && showExportSubmenu && label === '导出为...' && (
             <div
               style={{
                 position: 'absolute',
@@ -541,6 +543,58 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile }: {
                   <span style={{ fontSize: '11px', color: C.textMuted }}>{ext}</span>
                 </button>
               ))}
+            </div>
+          )}
+
+          {/* Type Submenu */}
+          {hasSubmenu && showTypeSubmenu && label === '修改笔记类型' && (
+            <div
+              style={{
+                position: 'absolute',
+                left: '100%',
+                top: 0,
+                marginLeft: '4px',
+                background: C.surface,
+                borderRadius: '10px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
+                border: `1px solid ${C.border}`,
+                padding: '6px',
+                minWidth: '140px',
+                zIndex: 51,
+              }}
+            >
+              {noteTypes.map((type) => {
+                const Icon = type.icon
+                const active = note?.noteType === type.key || (!note?.noteType && type.key === 'normal')
+                return (
+                  <button
+                    key={type.key}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { onChangeType?.(note, type.key); onClose() }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '8px 10px',
+                      borderRadius: '7px',
+                      border: 'none',
+                      background: active ? type.color + '14' : 'transparent',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      fontSize: '13px',
+                      color: active ? type.color : C.text,
+                      textAlign: 'left',
+                      transition: 'background 0.15s',
+                      width: '100%',
+                    }}
+                    onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#F8FAFC' }}
+                    onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
+                  >
+                    <Icon size={15} style={{ color: type.color }} />
+                    <span style={{ flex: 1 }}>{type.label}</span>
+                  </button>
+                )
+              })}
             </div>
           )}
         </div>
@@ -910,6 +964,13 @@ export default function NotesPage() {
         return
       }
 
+      // 持久化笔记类型到本地目录的 .dunote-meta.json
+      try {
+        await saveNoteType(selectedLocalFolder, toRelPath(selectedLocalFolder, filePath), pendingNoteType)
+      } catch (err) {
+        console.warn('[NoteCreate] 保存笔记类型失败:', err)
+      }
+
       const newNote: any = {
         id: `local-${filePath}`,
         title,
@@ -945,6 +1006,7 @@ export default function NotesPage() {
   const scanDirectory = useCallback(async (dirPath: string, parentId: string | null, parentPath: string): Promise<{ folders: import('@/types').NoteFolder[]; notes: import('@/types').Note[] }> => {
     const folders: import('@/types').NoteFolder[] = []
     const notes: import('@/types').Note[] = []
+    const noteTypeMap = await loadNoteTypes(dirPath)
 
     const scan = async (currentPath: string, currentParentId: string | null): Promise<void> => {
       try {
@@ -962,6 +1024,7 @@ export default function NotesPage() {
           const name = entry.name.toLowerCase()
           if (name.endsWith('.html')) {
             const fullPath = currentPath + '/' + entry.name
+            const relPath = toRelPath(dirPath, fullPath)
             const now = new Date().toISOString()
             notes.push({
               id: `local-${fullPath}`,
@@ -970,7 +1033,7 @@ export default function NotesPage() {
               filePath: fullPath,
               createdAt: now,
               updatedAt: now,
-              noteType: 'normal',
+              noteType: noteTypeMap[relPath] || 'normal',
               folderId: currentParentId || 'local-root',
               tags: [] as string[],
               _isLocalFile: true,
@@ -1202,6 +1265,21 @@ export default function NotesPage() {
       console.error('[Restore] Failed to write restored content:', error)
     }
   }, [localNotes, addHistoryEntry])
+
+  // ─── Change note type ───
+  const handleChangeNoteType = useCallback(async (note: any, noteType: string) => {
+    if (!note) return
+    if (note._isLocalFile && note.filePath && selectedLocalFolder) {
+      try {
+        await saveNoteType(selectedLocalFolder, toRelPath(selectedLocalFolder, note.filePath), noteType)
+        setLocalNotes(prev => prev.map(n => n.id === note.id ? { ...n, noteType } : n))
+      } catch (err) {
+        console.error('[ChangeType] Failed:', err)
+      }
+    } else {
+      updateNote(note.id, { noteType })
+    }
+  }, [selectedLocalFolder, updateNote])
 
   // ─── Delete handlers ───
   const handleDeleteNote = useCallback(async (note: any) => {
@@ -1730,7 +1808,7 @@ export default function NotesPage() {
 
       {/* Context Menu */}
       {ctxMenu && (
-        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} note={ctxMenu.note} onClose={() => setCtxMenu(null)} onDelete={handleDeleteNote} onRevealFile={revealFile} />
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} note={ctxMenu.note} onClose={() => setCtxMenu(null)} onDelete={handleDeleteNote} onRevealFile={revealFile} onChangeType={handleChangeNoteType} />
       )}
 
       {/* Folder Context Menu */}

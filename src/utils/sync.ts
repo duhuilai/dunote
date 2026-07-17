@@ -241,12 +241,22 @@ export async function pushHistoryToGitee(
   const url = `${base}/repos/${await repoPath(config)}/contents/${encodePath(path)}`
   console.log('[Gitee] 推送路径', path, 'URL', url)
 
+  // Gitee 单文件约 1MB 限制；智能表格笔记若同时含 base64 图片极易超限。
+  // 提前给出明确提示，避免「推送静默失败 → 恢复时找不到历史 → 看似表格丢失」的迷惑现象。
+  const encoded = utf8ToBase64(JSON.stringify(payload, null, 2))
+  if (encoded.length > 900 * 1024) {
+    return {
+      success: false,
+      message: `笔记内容过大（约 ${Math.round(encoded.length / 1024)}KB），已达/接近 Gitee 单文件约 1MB 限制，历史无法生成。请减少嵌入的图片（或改用本地历史）后重试。`,
+    }
+  }
+
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders(config.token) },
       body: JSON.stringify({
-        content: utf8ToBase64(JSON.stringify(payload, null, 2)),
+        content: encoded,
         message: `duNote 备份: ${entry.title} @ ${ts}`,
         branch,
       }),
