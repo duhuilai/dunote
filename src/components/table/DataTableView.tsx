@@ -1,5 +1,5 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Plus, Trash2, X, ArrowUpDown, Filter, ArrowUp, ArrowDown,
@@ -992,13 +992,18 @@ function CellEditor({
 
   // 文本单元格自动撑高（多行换行显示）
   const textRef = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => {
+  const autoSize = useCallback(() => {
     const el = textRef.current
     if (el) {
       el.style.height = 'auto'
       el.style.height = el.scrollHeight + 'px'
     }
-  }, [value])
+  }, [])
+  // 在绘制前重算：列宽变化（拖拽变窄/变宽）或内容变化都要重新撑高，
+  // 否则旧高度 + overflow:hidden 会把多行文本裁掉。
+  useLayoutEffect(() => {
+    autoSize()
+  }, [value, column.width, autoSize])
 
   if (t === 'checkbox') {
     return (
@@ -1197,6 +1202,7 @@ function CellEditor({
       ref={textRef}
       value={(value as string) || ''}
       onChange={(e) => onChange(e.target.value)}
+      onInput={autoSize}
       rows={1}
       style={{
         ...cellInputStyle,

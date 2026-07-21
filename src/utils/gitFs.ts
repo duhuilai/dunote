@@ -18,7 +18,12 @@ const isWin = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform
 /** 规范化路径分隔符：Windows 下统一转成反斜杠，避免 Tauri/Rust 解析歧义 */
 function norm(p: string): string {
   if (isWin) return p.replace(/\//g, '\\')
-  return p
+  return p.replace(/\\/g, '/')
+}
+
+/** 去掉路径两端的斜杠/反斜杠 */
+function stripSlashes(p: string): string {
+  return p.replace(/^[\\/]+/, '').replace(/[\\/]+$/, '')
 }
 
 /** 判断 isomorphic-git 传入的路径是否已经是绝对路径 */
@@ -32,13 +37,20 @@ function isAbsolute(p: string): boolean {
 function resolve(root: string, p: string): string {
   const clean = (p || '').replace(/^\.\//, '')
   if (isAbsolute(clean)) return norm(clean)
-  return norm(root.replace(/\/+$/, '') + '/' + clean)
+  const r = stripSlashes(root)
+  const c = stripSlashes(clean)
+  if (!r) return norm('/' + c)
+  return norm(r + '/' + c)
 }
 
 function translateError(err: any, fallback = 'EIO'): any {
   const msg = (err && err.message ? err.message : String(err || '')) as string
   let code = fallback
-  if (/not found|no such file|ENOENT/i.test(msg)) code = 'ENOENT'
+  // 命令未暴露 / 无权限（如 capability 漏配导致 "command ... not found"）——
+  // 必须识别为权限错误，绝不能误判成「文件不存在」，否则上层会抛出误导性的
+  // "Could not find xxx" 而掩盖真实原因。
+  if (/command|not allowed|denied|permission/i.test(msg)) code = 'EPERM'
+  else if (/not found|no such file|ENOENT/i.test(msg)) code = 'ENOENT'
   else if (/EEXIST|already exists/i.test(msg)) code = 'EEXIST'
   else if (/ENOTDIR|not a directory/i.test(msg)) code = 'ENOTDIR'
   else if (/EISDIR|is a directory/i.test(msg)) code = 'EISDIR'
