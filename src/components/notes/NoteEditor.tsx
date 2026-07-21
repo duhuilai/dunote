@@ -9,6 +9,7 @@ import Link from '@tiptap/extension-link'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { DataTable } from '@/extensions/dataTable'
+import { SearchExtension, searchPluginKey } from '@/extensions/search'
 import { Table } from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableCell from '@tiptap/extension-table-cell'
@@ -94,7 +95,7 @@ import {
   List, ListOrdered, Quote, Code, CodeSquare,
   Link2, Image as ImageIcon, Highlighter, Palette, ChevronDown,
   Undo, Redo, Minus, Download, FileText, FileCode, FileType, Clock,
-  AlignLeft, AlignCenter, AlignRight, Plus, Trash2, Table as TableIcon, X,
+  AlignLeft, AlignCenter, AlignRight, Plus, Trash2, Table as TableIcon, X, Search,
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight
 } from 'lucide-react'
 import { useEffect, useState, useRef, useCallback } from 'react'
@@ -155,6 +156,14 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
   const onLocalPersistRef = useRef(onLocalPersist)
   onLocalPersistRef.current = onLocalPersist
 
+  // ─── 检索（Ctrl+F / Cmd+F） ───
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [matchCount, setMatchCount] = useState(0)
+  const [matchIndex, setMatchIndex] = useState(0)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const lastSearchedRef = useRef('')
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -180,6 +189,7 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       FontFamily,
       FontSize,
       SlashCommand,
+      SearchExtension,
     ],
     content: note.content,
     editorProps: {
@@ -416,6 +426,84 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       editorMetaRef.current = { noteId: targetId, isLocal, path }
     })
   }, [editor, note.id, reloadToken])
+
+  // ─── 检索功能：打开 / 检索 / 上一个下一个 / 关闭 ───
+  const clearSearchState = useCallback(() => {
+    const ed = editorRef.current
+    if (ed) ed.view.dispatch(ed.state.tr.setMeta(searchPluginKey, { query: '' }))
+    setSearchQuery('')
+    setMatchCount(0)
+    setMatchIndex(0)
+    lastSearchedRef.current = ''
+  }, [])
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true)
+    // 预填当前选中的文本作为检索词（不立即检索，等回车 / 按钮）
+    const ed = editorRef.current
+    if (ed) {
+      const { from, to } = ed.state.selection
+      if (from !== to) {
+        const sel = ed.state.doc.textBetween(from, to, ' ')
+        if (sel) setSearchQuery(sel)
+      }
+    }
+    lastSearchedRef.current = ''
+    requestAnimationFrame(() => searchInputRef.current?.focus())
+  }, [])
+
+  const runSearch = useCallback((q: string, navigate = false) => {
+    const ed = editorRef.current
+    if (!ed) return
+    // 关键词未变且已检索过 → 跳到下一个匹配；否则按新关键词重新检索并定位到第一个
+    if (navigate && q === lastSearchedRef.current) {
+      ed.view.dispatch(ed.state.tr.setMeta(searchPluginKey, { step: 1 }))
+      const st = searchPluginKey.getState(ed.state)
+      setMatchIndex(st && st.matches.length ? st.current + 1 : 0)
+      return
+    }
+    ed.view.dispatch(ed.state.tr.setMeta(searchPluginKey, { query: q }))
+    lastSearchedRef.current = q
+    const st = searchPluginKey.getState(ed.state)
+    const count = st?.matches.length ?? 0
+    setMatchCount(count)
+    setMatchIndex(count ? 1 : 0)
+    if (q && count === 0) showToast('无匹配信息', 'info')
+  }, [showToast])
+
+  const gotoMatch = useCallback((step: number) => {
+    const ed = editorRef.current
+    if (!ed) return
+    const st0 = searchPluginKey.getState(ed.state)
+    if (!st0 || st0.matches.length === 0) return
+    ed.view.dispatch(ed.state.tr.setMeta(searchPluginKey, { step }))
+    const st = searchPluginKey.getState(ed.state)
+    setMatchCount(st?.matches.length ?? 0)
+    setMatchIndex(st && st.matches.length ? st.current + 1 : 0)
+  }, [])
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false)
+    clearSearchState()
+  }, [clearSearchState])
+
+  // Ctrl+F / Cmd+F 打开检索，并阻止浏览器默认查找
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        openSearch()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [openSearch])
+
+  // 切换笔记时清除检索状态，避免把上一篇的匹配带到新笔记
+  useEffect(() => {
+    clearSearchState()
+    setSearchOpen(false)
+  }, [note.id, clearSearchState])
 
   if (!editor) return null
 
@@ -1125,6 +1213,12 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
         >
           <Highlighter size={16} />
         </ToolBtn>
+        <ToolBtn
+          onClick={openSearch}
+          title="检索（Ctrl+F / Cmd+F）"
+        >
+          <Search size={16} />
+        </ToolBtn>
 
         <Divider />
 
@@ -1289,18 +1383,78 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       </div>
 
       {/* ─── Editor Content ─── */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        <EditorContent 
-          editor={editor} 
-          onContextMenu={(e) => {
-            if (editor.isActive('dataTable')) return // 智能表格自带工具栏，不弹编辑器菜单
-            if (editor.isActive('table')) {
-              handleEditorContextMenu(e)
-            } else {
-              handleTextContextMenu(e)
-            }
-          }}
-        />
+      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+        {searchOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 12,
+              right: 16,
+              zIndex: 50,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              background: C.surface,
+              border: `1px solid ${C.border}`,
+              borderRadius: '10px',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
+              padding: '6px 8px',
+            }}
+          >
+            <input
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  runSearch(searchQuery, true)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  closeSearch()
+                }
+              }}
+              placeholder="检索当前笔记…"
+              style={{
+                width: '200px',
+                border: 'none',
+                outline: 'none',
+                background: 'transparent',
+                fontSize: '13px',
+                color: C.text,
+                fontFamily: 'inherit',
+              }}
+            />
+            <ToolBtn onClick={() => runSearch(searchQuery, true)} title="检索">
+              <Search size={15} />
+            </ToolBtn>
+            <ToolBtn onClick={() => gotoMatch(-1)} title="上一个匹配">
+              <ArrowUp size={15} />
+            </ToolBtn>
+            <ToolBtn onClick={() => gotoMatch(1)} title="下一个匹配">
+              <ArrowDown size={15} />
+            </ToolBtn>
+            <span style={{ fontSize: '12px', color: C.textMuted, minWidth: '46px', textAlign: 'center' }}>
+              {matchCount === 0 ? (searchQuery ? '无匹配' : '') : `${matchIndex}/${matchCount}`}
+            </span>
+            <ToolBtn onClick={closeSearch} title="关闭检索">
+              <X size={15} />
+            </ToolBtn>
+          </div>
+        )}
+        <div style={{ height: '100%', overflowY: 'auto' }}>
+          <EditorContent 
+            editor={editor} 
+            onContextMenu={(e) => {
+              if (editor.isActive('dataTable')) return // 智能表格自带工具栏，不弹编辑器菜单
+              if (editor.isActive('table')) {
+                handleEditorContextMenu(e)
+              } else {
+                handleTextContextMenu(e)
+              }
+            }}
+          />
+        </div>
       </div>
 
       {/* Table Floating Toolbar */}

@@ -232,3 +232,14 @@ input, select, textarea { font-family: inherit; }
 .du-data-table th .du-table-resize:hover {
   background: rgba(37, 99, 235, 0.25);
 }
+
+/* ─── 检索高亮 ─── */
+.tiptap .search-match {
+  background: rgba(250, 204, 21, 0.45);
+  border-radius: 2px;
+}
+.tiptap .search-current {
+  background: #FACC15;
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px rgba(202, 138, 4, 0.6);
+}
