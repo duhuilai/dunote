@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store'
-import { fetchGiteeFileContent } from '@/utils/sync'
+import { readVersion } from '@/utils/gitBackup'
 import { X, Clock, RotateCcw, Trash2, Eye } from 'lucide-react'
 
 /* ─── Color Tokens ─── */
@@ -32,10 +32,12 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
     const entry = noteHistory.find((h) => h.id === historyId)
     if (!entry) return
 
-    // 远程条目：还原前重新拉取 Gitee 上的最新内容，确保还原的是权威版本
-    if (entry.remote && entry.remotePath && settings.syncConfig.type === 'gitee') {
-      const fresh = await fetchGiteeFileContent(settings.syncConfig, entry.noteId, entry.remotePath)
+    // git 备份模式：从对应 commit 读取真实文件内容（本地与 Gitee 镜像一致）
+    let content = entry.content
+    if ((!content || !content.trim()) && entry.oid && entry.repoDir && entry.relPath) {
+      const fresh = await readVersion(entry.repoDir, entry.relPath, entry.oid)
       if (fresh != null) {
+        content = fresh
         updateHistoryContent(entry.id, fresh)
         entry.content = fresh
       }
@@ -45,7 +47,7 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
     setPreviewHistory(null)
     // Notify parent so it can handle local file writes
     if (onRestore && entry) {
-      onRestore(entry.noteId, entry.content, entry.title, (entry as any).filePath)
+      onRestore(entry.noteId, content || entry.content, entry.title, (entry as any).filePath)
     }
   }
 

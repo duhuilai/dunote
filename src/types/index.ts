@@ -32,6 +32,12 @@ export interface NoteHistory {
   remote?: boolean;
   /** 远程文件在仓库中的路径，用于还原时重新拉取最新内容 */
   remotePath?: string;
+  /** git 备份模式：该历史版本对应的 commit oid（用于 readVersion 读取真实文件内容） */
+  oid?: string;
+  /** git 备份模式：备份仓库根目录（.git 所在目录） */
+  repoDir?: string;
+  /** git 备份模式：笔记文件相对仓库根目录的路径 */
+  relPath?: string;
 }
 
 /* ─── Personnel Types ─── */

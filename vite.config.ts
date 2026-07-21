@@ -6,6 +6,10 @@ import path from 'path'
 export default defineConfig({
   base: './',
   plugins: [react(), tailwindcss()],
+  define: {
+    // isomorphic-git 依赖的 buffer 包在浏览器环境引用 global，映射到 globalThis
+    global: 'globalThis',
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

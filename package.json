@@ -1,7 +1,7 @@
 {
   "name": "dunote-qoder",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -36,10 +36,12 @@
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
     "@tiptap/suggestion": "^3.27.1",
+    "buffer": "^6.0.3",
     "date-fns": "^4.4.0",
     "docx": "^9.7.1",
     "file-saver": "^2.0.5",
     "html2pdf.js": "^0.14.0",
+    "isomorphic-git": "^1.38.9",
     "lucide-react": "^1.23.0",
     "marked": "^18.0.5",
     "react": "^19.2.7",

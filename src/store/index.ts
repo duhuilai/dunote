@@ -31,6 +31,8 @@ interface AppState {
   updateNote: (id: string, updates: Partial<Note>) => void;
   deleteNote: (id: string) => void;
   addHistoryEntry: (entry: Omit<NoteHistory, 'id' | 'timestamp'>) => void;
+  /** 用 git 历史版本列表整体替换当前历史（备份改用 git 后使用） */
+  setHistory: (list: NoteHistory[]) => void;
   restoreFromHistory: (historyId: string) => void;
   deleteHistoryEntry: (historyId: string) => void;
   /** 用远程拉取的历史替换该笔记的远程条目（保留本地条目） */
@@ -159,6 +161,7 @@ export const useAppStore = create<AppState>((set) => ({
   deleteHistoryEntry: (historyId: string) => set((s) => ({
     history: s.history.filter((h) => h.id !== historyId),
   })),
+  setHistory: (list) => set({ history: list }),
   mergeRemoteHistory: (noteId, entries) => set((s) => {
     // 移除该笔记旧的远程条目，替换为刚拉取的远程条目，本地条目原样保留
     const localOnly = s.history.filter((h) => h.noteId !== noteId || !h.remote)

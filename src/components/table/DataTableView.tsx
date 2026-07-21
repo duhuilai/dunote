@@ -1,5 +1,5 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Plus, Trash2, X, ArrowUpDown, Filter, ArrowUp, ArrowDown,
@@ -10,6 +10,7 @@ import {
   FIELD_TYPES, OPTION_COLORS, emptyValueFor, uid,
 } from './fieldTypes'
 import { confirm } from '@tauri-apps/plugin-dialog'
+import { subscribeSearchBroadcast, getSearchBroadcast } from '@/extensions/searchState'
 
 /* ─── 颜色令牌 ─── */
 const C = {
@@ -27,6 +28,10 @@ const C = {
 const MIN_COL_WIDTH = 80
 const ACTION_COL_WIDTH = 36
 const DEFAULT_COL_WIDTH = 160
+
+// 检索命中单元格高亮色（与编辑器 .search-match / .search-current 相近）
+const HL_MATCH = 'rgba(250, 204, 21, 0.38)'
+const HL_CURRENT = 'rgba(250, 204, 21, 0.72)'
 
 type SortState = { colId: string; dir: 'asc' | 'desc' } | null
 type FilterMode = 'contains' | 'equals' | 'empty'
@@ -46,6 +51,16 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   const [toolPop, setToolPop] = useState<'sort' | 'filter' | null>(null)
 
   const tableWrapRef = useRef<HTMLDivElement>(null)
+
+  // 订阅检索广播：命中智能表格单元格时高亮并参与定位
+  const search = useSyncExternalStore(subscribeSearchBroadcast, getSearchBroadcast)
+  const cellHighlight = (rowId: string, colId: string): 'current' | 'match' | null => {
+    if (!search.query) return null
+    const hit = search.matches.some((m) => m.rowId === rowId && m.colId === colId)
+    if (!hit) return null
+    if (search.current && search.current.rowId === rowId && search.current.colId === colId) return 'current'
+    return 'match'
+  }
 
   /* ── 点击外部关闭下拉 ── */
   useEffect(() => {
@@ -393,7 +408,7 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
             maxHeight: 'min(60vh, 520px)',
           }}
         >
-          <table style={{ borderCollapse: 'separate', borderSpacing: 0, width: '100%', fontSize: '13px' }}>
+          <table style={{ borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed', width: 'max-content', minWidth: '100%', fontSize: '13px' }}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
               <tr>
                 {/* 行序号/操作列 */}
@@ -538,9 +553,12 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                       </button>
                     </div>
                   </td>
-                  {columns.map((c) => (
+                  {columns.map((c) => {
+                    const hl = cellHighlight(r.id, c.id)
+                    return (
                     <td
                       key={c.id}
+                      className={hl === 'current' ? 'search-current' : hl === 'match' ? 'search-match' : undefined}
                       style={{
                         width: c.width ?? DEFAULT_COL_WIDTH,
                         minWidth: c.width ?? DEFAULT_COL_WIDTH,
@@ -549,7 +567,9 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                         borderRight: `1px solid ${C.border}`,
                         padding: '4px 6px',
                         verticalAlign: 'top',
-                        background: C.surface,
+                        background: hl === 'current' ? HL_CURRENT : hl === 'match' ? HL_MATCH : C.surface,
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word',
                       }}
                     >
                       <CellEditor
@@ -560,7 +580,8 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                         onToggleMulti={() => setMultiOpen(multiOpen === r.id + ':' + c.id ? null : r.id + ':' + c.id)}
                       />
                     </td>
-                  ))}
+                    )
+                  })}
                 </tr>
               ))}
               {displayRows.length === 0 && (
@@ -754,6 +775,7 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
   const today = new Date()
   const init = parseISO(value) || today
   const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<'day' | 'month' | 'year'>('day')
   const [view, setView] = useState({ y: init.getFullYear(), m: init.getMonth() })
   const [pos, setPos] = useState({ left: 0, top: 0 })
   const triggerRef = useRef<HTMLDivElement>(null)
@@ -777,6 +799,9 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
   }, [open])
 
   const openPop = () => {
+    const d = parseISO(value)
+    setView(d ? { y: d.getFullYear(), m: d.getMonth() } : { y: today.getFullYear(), m: today.getMonth() })
+    setMode('day')
     const r = triggerRef.current?.getBoundingClientRect()
     if (r) setPos({ left: r.left, top: r.bottom + 4 })
     setOpen((v) => !v)
@@ -789,12 +814,23 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
   for (let d = 1; d <= daysInMonth; d++) cells.push(d)
 
   const sel = parseISO(value)
-  const sameYM = sel && sel.getFullYear() === view.y && sel.getMonth() === view.m
+  const sameYM = !!sel && sel.getFullYear() === view.y && sel.getMonth() === view.m
+
+  const cellBtn = (active: boolean, isToday = false): React.CSSProperties => ({
+    border: 'none',
+    borderRadius: '6px',
+    padding: '6px 0',
+    fontSize: '12px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    background: active ? C.primary : 'transparent',
+    color: active ? '#fff' : isToday ? C.primary : C.text,
+    fontWeight: active || isToday ? 600 : 400,
+  })
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }} ref={triggerRef}>
       <div
-        ref={triggerRef}
         onClick={openPop}
         style={{
           ...cellInputStyle,
@@ -825,56 +861,97 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
             fontFamily: 'inherit',
           }}
         >
+          {/* 标题栏：点标题在 日/月/年 视图间切换，可跳年/跳月 */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
             <button
               onClick={() => setView({ y: view.m === 0 ? view.y - 1 : view.y, m: view.m === 0 ? 11 : view.m - 1 })}
-              style={{ ...iconBtn, padding: '2px 6px' }}
+              style={{ ...iconBtn, padding: '2px 6px', display: mode === 'day' ? 'block' : 'none' }}
             >‹</button>
-            <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>{view.y}年 {view.m + 1}月</div>
+            <button
+              onClick={() => setMode(mode === 'year' ? 'month' : 'year')}
+              style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '13px', fontWeight: 600, color: C.text }}
+            >
+              {mode === 'day' ? `${view.y}年 ${view.m + 1}月` : mode === 'month' ? `${view.y}年` : `${Math.floor(view.y / 12) * 12}年代`}
+            </button>
             <button
               onClick={() => setView({ y: view.m === 11 ? view.y + 1 : view.y, m: view.m === 11 ? 0 : view.m + 1 })}
-              style={{ ...iconBtn, padding: '2px 6px' }}
+              style={{ ...iconBtn, padding: '2px 6px', display: mode === 'day' ? 'block' : 'none' }}
             >›</button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '6px' }}>
-            {WEEKDAYS.map((w) => (
-              <div key={w} style={{ textAlign: 'center', fontSize: '11px', color: C.textMuted, padding: '4px 0' }}>{w}</div>
-            ))}
-          </div>
+          {/* 日视图 */}
+          {mode === 'day' && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', marginBottom: '6px' }}>
+                {WEEKDAYS.map((w) => (
+                  <div key={w} style={{ textAlign: 'center', fontSize: '11px', color: C.textMuted, padding: '4px 0' }}>{w}</div>
+                ))}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+                {cells.map((d, i) => {
+                  if (d === null) return <div key={'b' + i} />
+                  const isSel = sameYM && sel && sel.getDate() === d
+                  const isToday = today.getFullYear() === view.y && today.getMonth() === view.m && today.getDate() === d
+                  return (
+                    <button key={d} onClick={() => { onChange(toISO(view.y, view.m, d)); setOpen(false) }} style={cellBtn(isSel, isToday)}>{d}</button>
+                  )
+                })}
+              </div>
+              <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
+                <button onClick={() => { const t = new Date(); setView({ y: t.getFullYear(), m: t.getMonth() }); onChange(toISO(t.getFullYear(), t.getMonth(), t.getDate())); setOpen(false) }} style={{ ...miniBtn, flex: 1 }}>今天</button>
+                <button onClick={() => { onChange(''); setOpen(false) }} style={{ ...miniBtn, flex: 1 }}>清除</button>
+              </div>
+            </>
+          )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
-            {cells.map((d, i) => {
-              if (d === null) return <div key={'b' + i} />
-              const isSel = sameYM && sel && sel.getDate() === d
-              const isToday = today.getFullYear() === view.y && today.getMonth() === view.m && today.getDate() === d
-              return (
+          {/* 月视图：点月份回到日视图 */}
+          {mode === 'month' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+              {Array.from({ length: 12 }, (_, m) => (
                 <button
-                  key={d}
-                  onClick={() => { onChange(toISO(view.y, view.m, d)); setOpen(false) }}
+                  key={m}
+                  onClick={() => { setView((v) => ({ ...v, m })); setMode('day') }}
                   style={{
                     border: 'none',
                     borderRadius: '6px',
-                    padding: '6px 0',
+                    padding: '8px 0',
                     fontSize: '12px',
                     cursor: 'pointer',
                     fontFamily: 'inherit',
-                    background: isSel ? C.primary : 'transparent',
-                    color: isSel ? '#fff' : isToday ? C.primary : C.text,
-                    fontWeight: isSel || isToday ? 600 : 400,
+                    background: view.m === m ? C.primaryLight : 'transparent',
+                    color: view.m === m ? C.primary : C.text,
+                    fontWeight: view.m === m ? 600 : 400,
                   }}
-                >{d}</button>
-              )
-            })}
-          </div>
+                >{m + 1}月</button>
+              ))}
+            </div>
+          )}
 
-          <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-            <button
-              onClick={() => { const t = new Date(); setView({ y: t.getFullYear(), m: t.getMonth() }); onChange(toISO(t.getFullYear(), t.getMonth(), t.getDate())); setOpen(false) }}
-              style={{ ...miniBtn, flex: 1 }}
-            >今天</button>
-            <button onClick={() => { onChange(''); setOpen(false) }} style={{ ...miniBtn, flex: 1 }}>清除</button>
-          </div>
+          {/* 年视图：点年份进入月视图 */}
+          {mode === 'year' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
+              {Array.from({ length: 12 }, (_, i) => {
+                const y = view.y - 6 + i
+                return (
+                  <button
+                    key={y}
+                    onClick={() => { setView((v) => ({ ...v, y })); setMode('month') }}
+                    style={{
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '8px 0',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      background: view.y === y ? C.primaryLight : 'transparent',
+                      color: view.y === y ? C.primary : C.text,
+                      fontWeight: view.y === y ? 600 : 400,
+                    }}
+                  >{y}</button>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -896,6 +973,16 @@ function CellEditor({
   onToggleMulti: () => void
 }) {
   const t = column.type
+
+  // 文本单元格自动撑高（多行换行显示）
+  const textRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = textRef.current
+    if (el) {
+      el.style.height = 'auto'
+      el.style.height = el.scrollHeight + 'px'
+    }
+  }, [value])
 
   if (t === 'checkbox') {
     return (
@@ -1088,12 +1175,27 @@ function CellEditor({
     )
   }
 
-  // text 默认
+  // text 默认：换行文本框（超出列宽自动折行，高度随内容增长）
   return (
-    <input
+    <textarea
+      ref={textRef}
       value={(value as string) || ''}
       onChange={(e) => onChange(e.target.value)}
-      style={cellInputStyle}
+      rows={1}
+      style={{
+        ...cellInputStyle,
+        display: 'block',
+        height: 'auto',
+        minHeight: '26px',
+        resize: 'none',
+        overflow: 'hidden',
+        lineHeight: 1.45,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        overflowWrap: 'anywhere',
+        background: 'transparent',
+        borderRadius: '4px',
+      }}
     />
   )
 }

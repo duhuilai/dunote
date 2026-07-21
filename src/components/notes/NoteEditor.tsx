@@ -101,7 +101,16 @@ import {
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { exportNote, exportToDownloads, type ExportFormat } from '@/utils/exportNote'
 import { ExportSaveModal } from './ExportSaveModal'
-import { syncHistoryToRemote, restoreHistoryFromRemote, toRelativePath } from '@/utils/sync'
+import { toRelativePath, resolveGiteeRemoteUrl } from '@/utils/sync'
+import {
+  commitNoteFile,
+  listHistory,
+  readVersion,
+  pushToRemote,
+  pullRemote,
+  sanitizeNoteIdForFile,
+  GITEE_REMOTE,
+} from '@/utils/gitBackup'
 import { useAppStore } from '@/store'
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs'
 
@@ -131,7 +140,7 @@ interface NoteEditorProps {
 }
 
 export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: NoteEditorProps) {
-  const { updateNote, addHistoryEntry, setShowHistory, settings, showToast, mergeRemoteHistory, localRootFolder, appVersion } = useAppStore()
+  const { updateNote, setShowHistory, setHistory, settings, showToast, localRootFolder, setSelectedNoteId } = useAppStore()
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [exportTarget, setExportTarget] = useState<{ format: ExportFormat; title: string; html: string } | null>(null)
   const [isCreatingHistory, setIsCreatingHistory] = useState(false)
@@ -512,85 +521,127 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
     setExportTarget({ format, title: note.title || 'untitled', html: editor.getHTML() })
   }
 
-  // Manual history creation
+  // 计算当前笔记在备份仓库中的相对路径
+  const resolveBackupTarget = (): { repoDir: string; relPath: string } | null => {
+    const repoDir = localRootFolder
+    if (!repoDir) return null
+    if (note.filePath) {
+      const rel = toRelativePath(note.filePath, repoDir).replace(/\\/g, '/')
+      if (rel) return { repoDir, relPath: rel }
+    }
+    // 内存型「普通笔记」：物化到仓库隐藏目录，避免污染用户可见文件
+    return { repoDir, relPath: `.dunote/notes/${sanitizeNoteIdForFile(note.id)}.html` }
+  }
+
+  // 生成版本 = 把当前笔记真实文件提交进 git 仓库（Gitee 模式再 push）
   const handleCreateHistory = async () => {
     if (creatingHistoryRef.current) return
     creatingHistoryRef.current = true
     setIsCreatingHistory(true)
     try {
-      const syncConfig = settings.syncConfig
-
-      if (syncConfig.type === 'local') {
-        // 本地模式：直接生成一条本地历史
-        addHistoryEntry({
-          noteId: note.id,
-          title: note.title,
-          content: editor.getHTML(),
-          action: 'edit',
-        })
-        showToast('已生成本地历史', 'success')
+      const target = resolveBackupTarget()
+      if (!target) {
+        showToast('请先在「打开文件夹」中选择一个本地目录作为备份仓库', 'error')
         return
       }
-
-      // Gitee 模式：调用接口推送快照
-      if (!syncConfig.token || !syncConfig.repo) {
-        showToast('请先在设置中填写 Gitee 令牌与仓库名', 'error')
-        return
-      }
-      showToast('正在同步到 Gitee…', 'info')
-      const relPath = toRelativePath(note.filePath, localRootFolder)
-      const result = await syncHistoryToRemote(syncConfig, {
-        noteId: note.id,
-        title: note.title,
-        content: editor.getHTML(),
-        action: 'edit',
-      }, {
-        relPath,
-        appVersion,
-        localPath: note.filePath || '',
+      const content = editor.getHTML()
+      const ts = new Date().toLocaleString('zh-CN')
+      const commitRes = await commitNoteFile({
+        repoDir: target.repoDir,
+        relPath: target.relPath,
+        content,
+        message: `duNote 备份: ${note.title} @ ${ts}`,
       })
-
-      if (result.success) {
-        // 同时保留一条本地记录，便于立即在面板中查看
-        addHistoryEntry({
-          noteId: note.id,
-          title: note.title,
-          content: editor.getHTML(),
-          action: 'edit',
-        })
-        showToast('生成成功', 'success')
-      } else {
-        showToast(result.message || '生成失败，请检查 Gitee 配置或网络', 'error')
+      if (!commitRes.success) {
+        showToast('生成本地版本失败：' + (commitRes.message || ''), 'error')
+        return
       }
+
+      const syncConfig = settings.syncConfig
+      const useGitee = syncConfig.type === 'gitee' && syncConfig.token && syncConfig.repo
+      if (useGitee) {
+        showToast('正在同步到 Gitee…', 'info')
+        const remote = await resolveGiteeRemoteUrl(syncConfig)
+        if (!remote) {
+          showToast('Gitee 仓库名无效，请检查设置', 'error')
+          return
+        }
+        const pushRes = await pushToRemote({
+          repoDir: target.repoDir,
+          remoteUrl: remote.url,
+          token: syncConfig.token,
+          username: remote.owner,
+          branch: syncConfig.branch || 'main',
+        })
+        if (!pushRes.success) {
+          showToast('Gitee 同步失败：' + (pushRes.message || ''), 'error')
+          return
+        }
+      }
+
+      showToast(useGitee ? '已生成版本（本地 + Gitee）' : '已生成本地版本', 'success')
     } finally {
       creatingHistoryRef.current = false
       setIsCreatingHistory(false)
     }
   }
 
-  // Open history modal
+  // 打开历史面板：从 git log 取版本（Gitee 模式先拉取远程最新）
   const handleOpenHistory = async () => {
-    const syncConfig = settings.syncConfig
+    setSelectedNoteId(note.id)
+    const target = resolveBackupTarget()
+    if (!target) {
+      showToast('请先在「打开文件夹」中选择本地目录以查看备份', 'error')
+      setShowHistory(true)
+      return
+    }
 
-    if (syncConfig.type === 'gitee') {
-      if (!syncConfig.token || !syncConfig.repo) {
-        showToast('请先在设置中填写 Gitee 令牌与仓库名', 'error')
-      } else {
-        showToast('正在从 Gitee 拉取历史…', 'info')
-        const relPath = toRelativePath(note.filePath, localRootFolder)
-        const result = await restoreHistoryFromRemote(syncConfig, note.id, relPath)
-        if (result.success && result.data && result.data.length > 0) {
-          mergeRemoteHistory(note.id, result.data)
-          showToast(`已拉取 ${result.data.length} 条历史记录`, 'success')
-        } else if (result.success) {
-          showToast(result.message || 'Gitee 暂无该笔记的历史记录', 'info')
-        } else {
-          showToast(result.message || '拉取历史失败，请检查配置或网络', 'error')
+    const syncConfig = settings.syncConfig
+    const useGitee = syncConfig.type === 'gitee' && syncConfig.token && syncConfig.repo
+    if (useGitee) {
+      showToast('正在从 Gitee 拉取…', 'info')
+      const remote = await resolveGiteeRemoteUrl(syncConfig)
+      if (remote) {
+        const pull = await pullRemote({
+          repoDir: target.repoDir,
+          remoteUrl: remote.url,
+          token: syncConfig.token,
+          username: remote.owner,
+          branch: syncConfig.branch || 'main',
+        })
+        if (!pull.success) {
+          showToast('Gitee 拉取失败：' + (pull.message || '') + '（将仅显示本地版本）', 'error')
         }
       }
     }
 
-    // 打开历史面板（本地与远程模式都可用）
+    // 合并本地 HEAD 与远程跟踪引用的版本（按 oid 去重）
+    const local = await listHistory(target.repoDir, target.relPath, 'HEAD', 100)
+    const remoteRef = `refs/remotes/${GITEE_REMOTE}/${syncConfig.branch || 'main'}`
+    const remote = useGitee ? await listHistory(target.repoDir, target.relPath, remoteRef, 100) : []
+    const byOid = new Map<string, (typeof local)[number]>()
+    for (const v of [...local, ...remote]) byOid.set(v.oid, v)
+    const all = Array.from(byOid.values()).sort((a, b) => b.timestamp - a.timestamp)
+
+    // 读取每个版本的真实内容用于预览
+    const entries: any[] = await Promise.all(
+      all.map(async (v) => {
+        const content = (await readVersion(target.repoDir, target.relPath, v.oid)) || ''
+        return {
+          id: v.oid,
+          noteId: note.id,
+          title: note.title,
+          content,
+          timestamp: new Date(v.timestamp).toISOString(),
+          action: 'edit' as const,
+          oid: v.oid,
+          repoDir: target.repoDir,
+          relPath: target.relPath,
+        }
+      })
+    )
+
+    setHistory(entries)
     setShowHistory(true)
   }
 

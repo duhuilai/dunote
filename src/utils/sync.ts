@@ -41,7 +41,7 @@ function encodePath(p: string): string {
  * - 支持用户填写 "owner/repo" 或仅填仓库名：
  *   仅仓库名时，用私人令牌调 /user 自动探测当前登录用户作为 owner。
  */
-async function repoPath(config: SyncConfig): Promise<string> {
+export async function repoPath(config: SyncConfig): Promise<string> {
   let repo = (config.repo || '').trim()
   if (!repo) return ''
   if (!repo.includes('/')) {
@@ -405,4 +405,18 @@ export async function restoreHistoryFromRemote(
   relPath?: string
 ): Promise<SyncResult<NoteHistory[]>> {
   return pullHistoryFromGitee(config, noteId, relPath)
+}
+
+/**
+ * 解析出 Gitee 的 git 远程仓库地址（用于 isomorphic-git 的 push/fetch）。
+ * 返回形如 https://gitee.com/owner/repo.git 的地址与 owner（作为 Basic Auth 用户名）。
+ * 若仓库名只填了 repo 没填 owner，则探测当前登录用户。
+ */
+export async function resolveGiteeRemoteUrl(
+  config: SyncConfig
+): Promise<{ url: string; owner: string } | null> {
+  const rp = await repoPath(config)
+  if (!rp) return null
+  const owner = rp.split('/')[0]
+  return { url: `https://gitee.com/${rp}.git`, owner }
 }
