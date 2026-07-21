@@ -1,5 +1,5 @@
 import { NodeViewWrapper, type NodeViewProps } from '@tiptap/react'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Plus, Trash2, X, ArrowUpDown, Filter, ArrowUp, ArrowDown,
@@ -802,10 +802,26 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
     const d = parseISO(value)
     setView(d ? { y: d.getFullYear(), m: d.getMonth() } : { y: today.getFullYear(), m: today.getMonth() })
     setMode('day')
-    const r = triggerRef.current?.getBoundingClientRect()
-    if (r) setPos({ left: r.left, top: r.bottom + 4 })
     setOpen((v) => !v)
   }
+
+  // 日期选择器定位：下方空间不足时自动翻到触发元素上方，同时避免超出右边界
+  useLayoutEffect(() => {
+    if (!open) return
+    const trigger = triggerRef.current?.getBoundingClientRect()
+    const pop = popRef.current?.getBoundingClientRect()
+    if (!trigger || !pop) return
+    const gap = 4
+    const viewportH = window.innerHeight
+    const viewportW = window.innerWidth
+    const spaceBelow = viewportH - trigger.bottom
+    const placeBelow = spaceBelow >= pop.height + gap
+    const top = placeBelow
+      ? trigger.bottom + gap
+      : Math.max(gap, trigger.top - pop.height - gap)
+    const left = Math.max(gap, Math.min(trigger.left, viewportW - pop.width - gap))
+    setPos({ left, top })
+  }, [open, mode])
 
   const firstDay = new Date(view.y, view.m, 1).getDay()
   const daysInMonth = new Date(view.y, view.m + 1, 0).getDate()

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
@@ -74,10 +74,26 @@ export default function DateField({
     setView(d ? { y: d.getFullYear(), m: d.getMonth() } : { y: today.getFullYear(), m: today.getMonth() })
     setMode('day')
     setText(value)
-    const r = triggerRef.current?.getBoundingClientRect()
-    if (r) setPos({ left: r.left, top: r.bottom + 4 })
     setOpen(true)
   }
+
+  // 日期选择器定位：下方空间不足时自动翻到触发元素上方，同时避免超出右边界
+  useLayoutEffect(() => {
+    if (!open) return
+    const trigger = triggerRef.current?.getBoundingClientRect()
+    const pop = popRef.current?.getBoundingClientRect()
+    if (!trigger || !pop) return
+    const gap = 4
+    const viewportH = window.innerHeight
+    const viewportW = window.innerWidth
+    const spaceBelow = viewportH - trigger.bottom
+    const placeBelow = spaceBelow >= pop.height + gap
+    const top = placeBelow
+      ? trigger.bottom + gap
+      : Math.max(gap, trigger.top - pop.height - gap)
+    const left = Math.max(gap, Math.min(trigger.left, viewportW - pop.width - gap))
+    setPos({ left, top })
+  }, [open, mode])
 
   const commitText = () => {
     const d = parseISO(text.trim())
