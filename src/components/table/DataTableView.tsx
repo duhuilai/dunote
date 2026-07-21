@@ -1004,6 +1004,24 @@ function CellEditor({
   useLayoutEffect(() => {
     autoSize()
   }, [value, column.width, autoSize])
+  // 监听 textarea 自身宽度变化：table-layout:fixed 下列宽在父 table layout 后才最终确定，
+  // 重开笔记、列宽 settling 时宽度会变化，必须据此重算高度，否则多行文本仍被截断。
+  // 只响应宽度变化，忽略高度变化避免循环。
+  useLayoutEffect(() => {
+    const el = textRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    let lastWidth = 0
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect
+      if (!cr) return
+      if (cr.width !== lastWidth) {
+        lastWidth = cr.width
+        autoSize()
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [autoSize])
 
   if (t === 'checkbox') {
     return (
