@@ -274,7 +274,7 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
     <NodeViewWrapper
       className="du-data-table"
       contentEditable={false}
-      style={{ margin: '12px 0', userSelect: 'none' }}
+      style={{ margin: '12px 0' }}
     >
       <div
         style={{
