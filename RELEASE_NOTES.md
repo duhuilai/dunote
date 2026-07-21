@@ -1,15 +1,9 @@
-# v0.2.5
+# v0.2.6
 
-> 修复「生成本地版本」仍报 forbidden path（.git 权限开关位置错误），以及智能表格内容无法选中复制。
+> 修复「生成历史」Gitee 同步失败（push 请求体被错误序列化导致空响应）。
 
-## 一、修复生成历史仍报 forbidden path（requireLiteralLeadingDot 位置修正）
-- 现象：升级到 v0.2.4 后，点击「生成本地版本」仍报 `forbidden path: <仓库根>/.git/objects/...`。
-- 根因：上一版把 `requireLiteralLeadingDot: false` 放在了 `capabilities/default.json` 的 `fs:scope` 对象里，但该全局开关真正生效的位置是 **`tauri.conf.json` 的 `plugins.fs`**，所以 capability 改动没有实际解决问题。
-- 修复：在 `src-tauri/tauri.conf.json` 的 `plugins` 中加入 `"fs": { "requireLiteralLeadingDot": false }`，允许 fs 作用域匹配 `.git` 等隐藏目录。
-- 涉及文件：`src-tauri/tauri.conf.json`。
-
-## 二、修复智能表格内容无法选中复制
-- 现象：智能表格里的文本单元格无法用鼠标选中、无法复制。
-- 根因：`DataTableView` 根节点 `NodeViewWrapper` 上设置了 `userSelect: 'none'`，导致整个表格继承该样式、文本不可选中。
-- 修复：移除根节点的 `userSelect: 'none'`；列宽拖拽时仍通过 `document.body.style.userSelect = 'none'` 临时禁用选择，不影响拖拽体验。
-- 涉及文件：`src/components/table/DataTableView.tsx`。
+## 修复 Gitee 同步报错 "Expected unpack ok but received \"\""
+- 现象：点击「生成历史」后本地 commit 成功，但 Gitee 同步失败，报错 `Expected "unpack ok" or "unpack [error message]" but received ""`。
+- 根因：isomorphic-git 的 push 把 packstream 以 `Uint8Array[]` 数组形式传给 http 后端；`@tauri-apps/plugin-http` 的 `fetch` 内部用 `new Request(...).arrayBuffer()` 读取 body，直接传 `Uint8Array[]` 会被错误序列化（浏览器 Request 不接受数组），Gitee 收到空/错误请求体后返回空响应，isomorphic-git 解析首行 `unpack` 时得到空字符串。
+- 修复：`src/utils/gitHttp.ts` 新增 `normalizeBody()`，把 `Uint8Array[]` / `ArrayBuffer` / 异步可迭代统一合并成单个 `Uint8Array` 再交给 Tauri fetch；并增加请求/响应日志便于后续排查。
+- 涉及文件：`src/utils/gitHttp.ts`。
