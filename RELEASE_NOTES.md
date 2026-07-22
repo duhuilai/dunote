@@ -1,9 +1,13 @@
-# v0.2.7
+# v0.2.8
 
-> 修复「生成历史」Gitee 同步成功但网页看不到文件（默认分支不匹配）。
+> 修复恢复历史预览不显示内容 + 文件/文件夹删除增加确认弹窗。
 
-## 修复 Gitee 同步成功但网页看不到文件
-- 现象：点击「生成历史」后提示 Gitee 同步成功，但 Gitee 网页看不到提交的文件，显示「仓库为空」。
-- 根因：本地仓库与推送分支均为 `main`，而 Gitee 新建仓库默认分支是 `master`。push 实际成功（`main` 分支有内容），但 Gitee 网页默认展示 `master`（不存在/为空），导致看似没有文件。
-- 修复：`src/utils/gitBackup.ts` 的 `pushToRemote` 在 `git.push` 成功后，追加调用 Gitee API `PATCH /repos/{owner}/{repo}`，把仓库默认分支设为推送的分支（`main`），网页即可直接显示备份内容。该调用用 `@tauri-apps/plugin-http` 的 `fetch`（走 Rust 网络栈，无 CORS 预检），失败不阻断同步（仅返回提示让用户手动切分支）。
-- 涉及文件：`src/utils/gitBackup.ts`。
+## 修复恢复历史预览空白
+- 现象：点击历史记录的「预览」按钮，右侧预览面板不显示内容（空白）。
+- 根因：git 备份模式下历史条目的 `content` 字段为空（内容存储在 git commit 里，只在恢复时才通过 `readVersion` 从 git 读取），而预览按钮直接用 `previewHistory.content` 渲染，导致空白。
+- 修复：`HistoryModal.tsx` 新增 `handlePreview()`——点「预览」时先检查 `content` 是否为空，若空且有 `oid/repoDir/relPath`，则调 `readVersion` 从 git 读取真实内容；加了加载旋转状态，内容为空时显示占位文字。
+
+## 文件/文件夹删除增加确认弹窗
+- 现象：删除笔记或文件夹时没有确认提示，容易误删。
+- 根因：删除操作使用原生 `confirm()`，在 Tauri WebView 中可能不弹出。
+- 修复：新建 `src/components/ui/ConfirmDialog.tsx`——可复用的确认弹窗组件（`ConfirmProvider` + `useConfirm()` hook），支持 `danger` 红色样式、自定义标题和按钮文字；`App.tsx` 根部包裹 `ConfirmProvider`；`NotesPage` 的 `handleDeleteNote` 和 `handleDeleteFolder` 改用自定义确认弹窗，错误提示也从 `alert()` 改为 `showToast()`。

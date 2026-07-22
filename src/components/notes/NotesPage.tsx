@@ -15,6 +15,7 @@ import { appConfigDir, join, dirname } from '@tauri-apps/api/path'
 import { open as shellOpen } from '@tauri-apps/plugin-shell'
 import { marked } from 'marked'
 import { loadNoteTypes, saveNoteType, toRelPath } from '@/utils/noteMeta'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -773,6 +774,8 @@ export default function NotesPage() {
     addHistoryEntry,
   } = useAppStore()
 
+  const confirm = useConfirm()
+
   const folders        = useAppStore((s) => s.folders)
   const addNote        = useAppStore((s) => s.addNote)
 
@@ -1284,7 +1287,13 @@ export default function NotesPage() {
   // ─── Delete handlers ───
   const handleDeleteNote = useCallback(async (note: any) => {
     const name = note.title || '未命名笔记'
-    if (!confirm(`确定要删除「${name}」吗？\n此操作不可撤销。`)) return
+    const ok = await confirm({
+      title: '删除笔记',
+      message: `确定要删除「${name}」吗？\n此操作不可撤销。`,
+      confirmText: '删除',
+      danger: true,
+    })
+    if (!ok) return
 
     if (note._isLocalFile && note.filePath) {
       // Delete local file from disk
@@ -1293,7 +1302,7 @@ export default function NotesPage() {
         console.log(`[Delete] Removed file: ${note.filePath}`)
       } catch (err) {
         console.error('[Delete] Failed to remove file:', err)
-        alert('删除失败: ' + (err instanceof Error ? err.message : String(err)))
+        showToast('删除失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
         return
       }
       // Remove from localNotes state
@@ -1303,11 +1312,17 @@ export default function NotesPage() {
       // Delete from store
       deleteNote(note.id)
     }
-  }, [deleteNote, selectedNoteId, setSelectedNoteId])
+  }, [confirm, deleteNote, selectedNoteId, setSelectedNoteId, showToast])
 
   const handleDeleteFolder = useCallback(async (folder: any) => {
     const name = folder.name || '未命名文件夹'
-    if (!confirm(`确定要删除文件夹「${name}」及其所有内容吗？\n此操作不可撤销。`)) return
+    const ok = await confirm({
+      title: '删除文件夹',
+      message: `确定要删除文件夹「${name}」及其所有内容吗？\n此操作不可撤销。`,
+      confirmText: '删除',
+      danger: true,
+    })
+    if (!ok) return
 
     if (!folder.path) return
 
@@ -1316,7 +1331,7 @@ export default function NotesPage() {
       console.log(`[Delete] Removed folder: ${folder.path}`)
     } catch (err) {
       console.error('[Delete] Failed to remove folder:', err)
-      alert('删除文件夹失败: ' + (err instanceof Error ? err.message : String(err)))
+      showToast('删除文件夹失败: ' + (err instanceof Error ? err.message : String(err)), 'error')
       return
     }
 
@@ -1340,7 +1355,7 @@ export default function NotesPage() {
         setSelectedFolderId('local-root')
       }
     }
-  }, [selectedLocalFolder, selectedFolderId, setSelectedFolderId, scanDirectory, mergeScannedNotes])
+  }, [confirm, selectedLocalFolder, selectedFolderId, setSelectedFolderId, scanDirectory, mergeScannedNotes, showToast])
 
   // ─── Folder context menu ───
   const handleFolderContextMenu = useCallback((e: React.MouseEvent, folder: any) => {

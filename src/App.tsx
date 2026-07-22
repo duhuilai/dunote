@@ -10,6 +10,7 @@ import TasksPage from '@/components/tasks/TasksPage'
 import AnalyticsPage from '@/components/analytics/AnalyticsPage'
 import SettingsPage from '@/components/settings/SettingsPage'
 import Toast from '@/components/ui/Toast'
+import { ConfirmProvider } from '@/components/ui/ConfirmDialog'
 
 function App() {
   const currentPage = useAppStore((s) => s.currentPage)
@@ -72,13 +73,15 @@ function App() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F8FAFC' }}>
-      <Sidebar />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
-        {renderPage()}
+    <ConfirmProvider>
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F8FAFC' }}>
+        <Sidebar />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
+          {renderPage()}
+        </div>
+        <Toast />
       </div>
-      <Toast />
-    </div>
+    </ConfirmProvider>
   )
 }
 

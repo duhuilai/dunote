@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useAppStore } from '@/store'
 import { readVersion } from '@/utils/gitBackup'
-import { X, Clock, RotateCcw, Trash2, Eye } from 'lucide-react'
+import { X, Clock, RotateCcw, Trash2, Eye, Loader2 } from 'lucide-react'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -23,10 +23,32 @@ const C = {
 export default function HistoryModal({ onRestore }: { onRestore?: (noteId: string, content: string, title: string, filePath?: string) => void }) {
   const { showHistory, setShowHistory, history, selectedNoteId, restoreFromHistory, deleteHistoryEntry, settings, updateHistoryContent } = useAppStore()
   const [previewHistory, setPreviewHistory] = useState<any | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   if (!showHistory) return null
 
   const noteHistory = history.filter((h) => h.noteId === selectedNoteId)
+
+  // 预览时也要从 git 读取真实内容（git 备份模式下 history.content 可能为空）
+  const handlePreview = useCallback(async (entry: any) => {
+    let content = entry.content
+    if ((!content || !content.trim()) && entry.oid && entry.repoDir && entry.relPath) {
+      setPreviewLoading(true)
+      try {
+        const fresh = await readVersion(entry.repoDir, entry.relPath, entry.oid)
+        if (fresh != null) {
+          content = fresh
+          updateHistoryContent(entry.id, fresh)
+          entry.content = fresh
+        }
+      } catch {
+        /* 读取失败则显示已有内容 */
+      } finally {
+        setPreviewLoading(false)
+      }
+    }
+    setPreviewHistory({ ...entry, content })
+  }, [updateHistoryContent])
 
   const handleRestore = async (historyId: string) => {
     const entry = noteHistory.find((h) => h.id === historyId)
@@ -241,7 +263,7 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
                       <div style={{ display: 'flex', gap: '8px' }}>
                         {/* Preview button */}
                         <button
-                          onClick={() => setPreviewHistory(h)}
+                          onClick={() => handlePreview(h)}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
@@ -393,15 +415,22 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
                 padding: '20px',
               }}
             >
-              <div
-                className="tiptap-preview"
-                dangerouslySetInnerHTML={{ __html: previewHistory.content }}
-                style={{
-                  fontSize: '14px',
-                  lineHeight: '1.6',
-                  color: C.text,
-                }}
-              />
+              {previewLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: C.textMuted, gap: '8px' }}>
+                  <Loader2 size={18} className="spin" />
+                  <span style={{ fontSize: '14px' }}>加载中…</span>
+                </div>
+              ) : (
+                <div
+                  className="tiptap-preview"
+                  dangerouslySetInnerHTML={{ __html: previewHistory.content || '<p style="color:#94A3B8">（无内容）</p>' }}
+                  style={{
+                    fontSize: '14px',
+                    lineHeight: '1.6',
+                    color: C.text,
+                  }}
+                />
+              )}
             </div>
           </div>
         )}
