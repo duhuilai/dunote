@@ -1,9 +1,9 @@
-# v0.2.6
+# v0.2.7
 
-> 修复「生成历史」Gitee 同步失败（push 请求体被错误序列化导致空响应）。
+> 修复「生成历史」Gitee 同步成功但网页看不到文件（默认分支不匹配）。
 
-## 修复 Gitee 同步报错 "Expected unpack ok but received \"\""
-- 现象：点击「生成历史」后本地 commit 成功，但 Gitee 同步失败，报错 `Expected "unpack ok" or "unpack [error message]" but received ""`。
-- 根因：isomorphic-git 的 push 把 packstream 以 `Uint8Array[]` 数组形式传给 http 后端；`@tauri-apps/plugin-http` 的 `fetch` 内部用 `new Request(...).arrayBuffer()` 读取 body，直接传 `Uint8Array[]` 会被错误序列化（浏览器 Request 不接受数组），Gitee 收到空/错误请求体后返回空响应，isomorphic-git 解析首行 `unpack` 时得到空字符串。
-- 修复：`src/utils/gitHttp.ts` 新增 `normalizeBody()`，把 `Uint8Array[]` / `ArrayBuffer` / 异步可迭代统一合并成单个 `Uint8Array` 再交给 Tauri fetch；并增加请求/响应日志便于后续排查。
-- 涉及文件：`src/utils/gitHttp.ts`。
+## 修复 Gitee 同步成功但网页看不到文件
+- 现象：点击「生成历史」后提示 Gitee 同步成功，但 Gitee 网页看不到提交的文件，显示「仓库为空」。
+- 根因：本地仓库与推送分支均为 `main`，而 Gitee 新建仓库默认分支是 `master`。push 实际成功（`main` 分支有内容），但 Gitee 网页默认展示 `master`（不存在/为空），导致看似没有文件。
+- 修复：`src/utils/gitBackup.ts` 的 `pushToRemote` 在 `git.push` 成功后，追加调用 Gitee API `PATCH /repos/{owner}/{repo}`，把仓库默认分支设为推送的分支（`main`），网页即可直接显示备份内容。该调用用 `@tauri-apps/plugin-http` 的 `fetch`（走 Rust 网络栈，无 CORS 预检），失败不阻断同步（仅返回提示让用户手动切分支）。
+- 涉及文件：`src/utils/gitBackup.ts`。

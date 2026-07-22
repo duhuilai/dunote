@@ -13,6 +13,7 @@
 import git from 'isomorphic-git'
 import { makeTauriFs } from './gitFs'
 import { tauriHttp } from './gitHttp'
+import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import * as tauriFs from '@tauri-apps/plugin-fs'
 
 const GIT_USER_NAME = 'duNote'
@@ -157,9 +158,41 @@ export async function pushToRemote(opts: {
       force: true,
       onAuth: () => ({ username: opts.username, password: opts.token }),
     })
-    return { success: true }
+    // Gitee 新建仓库默认分支是 master，而本地/推送分支是 main。
+    // 若不改默认分支，网页默认展示 master（不存在/为空）→ 用户看到「仓库为空」。
+    // push 成功后把 Gitee 仓库默认分支设为我们推送的分支，网页即可直接看到备份文件。
+    const branchMsg = await setGiteeDefaultBranch(opts.remoteUrl, opts.token, branch)
+    return { success: true, message: branchMsg }
   } catch (e) {
     return { success: false, message: errMsg(e) }
+  }
+}
+
+/**
+ * 通过 Gitee API 把仓库默认分支设为我们推送的分支（main）。
+ * 失败不阻断（git push 已成功），仅返回提示，让用户在网页手动切换分支。
+ */
+async function setGiteeDefaultBranch(remoteUrl: string, token: string, branch: string): Promise<string | undefined> {
+  try {
+    const m = remoteUrl.replace(/\.git$/, '').match(/gitee\.com\/([^/]+)\/([^/]+)\/?$/i)
+    if (!m) return undefined
+    const owner = decodeURIComponent(m[1])
+    const repo = decodeURIComponent(m[2])
+    const url = `https://gitee.com/api/v5/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
+    const res = await tauriFetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `token ${token}` },
+      body: JSON.stringify({ default_branch: branch }),
+    })
+    if (res.ok) {
+      return `已同步到 Gitee（默认分支已设为 ${branch}）`
+    }
+    const err = await res.json().catch(() => ({}))
+    console.warn('[Gitee] 设置默认分支失败', res.status, err)
+    return `已推送到 Gitee 分支 ${branch}（设置默认分支失败：${err.message || res.status}，请在网页手动将默认分支切到 ${branch}）`
+  } catch (e) {
+    console.warn('[Gitee] 设置默认分支异常', e)
+    return `已推送到 Gitee 分支 ${branch}（设置默认分支异常，请在网页手动将默认分支切到 ${branch}）`
   }
 }
 
