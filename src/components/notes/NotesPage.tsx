@@ -778,6 +778,7 @@ export default function NotesPage() {
 
   const folders        = useAppStore((s) => s.folders)
   const addNote        = useAppStore((s) => s.addNote)
+  const showToast      = useAppStore((s) => s.showToast)
 
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; note: any } | null>(null)
   const [folderCtxMenu, setFolderCtxMenu] = useState<{ x: number; y: number; folder: any } | null>(null)
