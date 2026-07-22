@@ -31,45 +31,54 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
 
   // 预览时也要从 git 读取真实内容（git 备份模式下 history.content 可能为空）
   const handlePreview = useCallback(async (entry: any) => {
-    let content = entry.content
-    if ((!content || !content.trim()) && entry.oid && entry.repoDir && entry.relPath) {
-      setPreviewLoading(true)
-      try {
+    try {
+      let content = entry.content
+      if ((!content || !content.trim()) && entry.oid && entry.repoDir && entry.relPath) {
+        setPreviewLoading(true)
+        try {
+          const fresh = await readVersion(entry.repoDir, entry.relPath, entry.oid)
+          if (fresh != null) {
+            content = fresh
+            updateHistoryContent(entry.id, fresh)
+            entry.content = fresh
+          }
+        } catch {
+          /* 读取失败则显示已有内容 */
+        } finally {
+          setPreviewLoading(false)
+        }
+      }
+      setPreviewHistory({ ...entry, content })
+    } catch (err) {
+      console.error('[HistoryModal] handlePreview failed:', err)
+    }
+  }, [updateHistoryContent])
+
+  const handleRestore = async (historyId: string) => {
+    try {
+      const entry = noteHistory.find((h) => h.id === historyId)
+      if (!entry) return
+
+      // git 备份模式：从对应 commit 读取真实文件内容（本地与 Gitee 镜像一致）
+      let content = entry.content
+      if ((!content || !content.trim()) && entry.oid && entry.repoDir && entry.relPath) {
         const fresh = await readVersion(entry.repoDir, entry.relPath, entry.oid)
         if (fresh != null) {
           content = fresh
           updateHistoryContent(entry.id, fresh)
           entry.content = fresh
         }
-      } catch {
-        /* 读取失败则显示已有内容 */
-      } finally {
-        setPreviewLoading(false)
       }
-    }
-    setPreviewHistory({ ...entry, content })
-  }, [updateHistoryContent])
 
-  const handleRestore = async (historyId: string) => {
-    const entry = noteHistory.find((h) => h.id === historyId)
-    if (!entry) return
-
-    // git 备份模式：从对应 commit 读取真实文件内容（本地与 Gitee 镜像一致）
-    let content = entry.content
-    if ((!content || !content.trim()) && entry.oid && entry.repoDir && entry.relPath) {
-      const fresh = await readVersion(entry.repoDir, entry.relPath, entry.oid)
-      if (fresh != null) {
-        content = fresh
-        updateHistoryContent(entry.id, fresh)
-        entry.content = fresh
+      restoreFromHistory(historyId)
+      setPreviewHistory(null)
+      setShowHistory(false)
+      // Notify parent so it can handle local file writes
+      if (onRestore && entry) {
+        onRestore(entry.noteId, content || entry.content || '', entry.title, (entry as any).filePath)
       }
-    }
-
-    restoreFromHistory(historyId)
-    setPreviewHistory(null)
-    // Notify parent so it can handle local file writes
-    if (onRestore && entry) {
-      onRestore(entry.noteId, content || entry.content, entry.title, (entry as any).filePath)
+    } catch (err) {
+      console.error('[HistoryModal] handleRestore failed:', err)
     }
   }
 

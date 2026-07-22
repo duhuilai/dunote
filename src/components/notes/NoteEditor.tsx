@@ -431,7 +431,12 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       if (editor.isDestroyed || loadedNoteIdRef.current !== targetId) return
       baselineContentRef.current = content
       lastEmittedRef.current = content
-      editor.commands.setContent(content)
+      try {
+        editor.commands.setContent(content)
+      } catch (err) {
+        console.error('[NoteEditor] setContent failed:', err)
+        editor.commands.setContent('<p></p>')
+      }
       editorMetaRef.current = { noteId: targetId, isLocal, path }
     })
   }, [editor, note.id, reloadToken])
@@ -588,61 +593,70 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
 
   // 打开历史面板：从 git log 取版本（Gitee 模式先拉取远程最新）
   const handleOpenHistory = async () => {
-    setSelectedNoteId(note.id)
-    const target = resolveBackupTarget()
-    if (!target) {
-      showToast('请先在「打开文件夹」中选择本地目录以查看备份', 'error')
-      setShowHistory(true)
-      return
-    }
+    try {
+      setSelectedNoteId(note.id)
+      const target = resolveBackupTarget()
+      if (!target) {
+        showToast('请先在「打开文件夹」中选择本地目录以查看备份', 'error')
+        setShowHistory(true)
+        return
+      }
 
-    const syncConfig = settings.syncConfig
-    const useGitee = syncConfig.type === 'gitee' && syncConfig.token && syncConfig.repo
-    if (useGitee) {
-      showToast('正在从 Gitee 拉取…', 'info')
-      const remote = await resolveGiteeRemoteUrl(syncConfig)
-      if (remote) {
-        const pull = await pullRemote({
-          repoDir: target.repoDir,
-          remoteUrl: remote.url,
-          token: syncConfig.token,
-          username: remote.owner,
-          branch: syncConfig.branch || 'main',
-        })
-        if (!pull.success) {
-          showToast('Gitee 拉取失败：' + (pull.message || '') + '（将仅显示本地版本）', 'error')
+      const syncConfig = settings.syncConfig
+      const useGitee = syncConfig.type === 'gitee' && syncConfig.token && syncConfig.repo
+      if (useGitee) {
+        showToast('正在从 Gitee 拉取…', 'info')
+        const remote = await resolveGiteeRemoteUrl(syncConfig)
+        if (remote) {
+          const pull = await pullRemote({
+            repoDir: target.repoDir,
+            remoteUrl: remote.url,
+            token: syncConfig.token,
+            username: remote.owner,
+            branch: syncConfig.branch || 'main',
+          })
+          if (!pull.success) {
+            showToast('Gitee 拉取失败：' + (pull.message || '') + '（将仅显示本地版本）', 'error')
+          }
         }
       }
-    }
 
-    // 合并本地 HEAD 与远程跟踪引用的版本（按 oid 去重）
-    const local = await listHistory(target.repoDir, target.relPath, 'HEAD', 100)
-    const remoteRef = `refs/remotes/${GITEE_REMOTE}/${syncConfig.branch || 'main'}`
-    const remote = useGitee ? await listHistory(target.repoDir, target.relPath, remoteRef, 100) : []
-    const byOid = new Map<string, (typeof local)[number]>()
-    for (const v of [...local, ...remote]) byOid.set(v.oid, v)
-    const all = Array.from(byOid.values()).sort((a, b) => b.timestamp - a.timestamp)
+      // 合并本地 HEAD 与远程跟踪引用的版本（按 oid 去重）
+      const local = await listHistory(target.repoDir, target.relPath, 'HEAD', 100)
+      const remoteRef = `refs/remotes/${GITEE_REMOTE}/${syncConfig.branch || 'main'}`
+      const remote = useGitee ? await listHistory(target.repoDir, target.relPath, remoteRef, 100) : []
+      const byOid = new Map<string, (typeof local)[number]>()
+      for (const v of [...local, ...remote]) byOid.set(v.oid, v)
+      const all = Array.from(byOid.values()).sort((a, b) => b.timestamp - a.timestamp)
 
-    // 读取每个版本的真实内容用于预览
-    const entries: any[] = await Promise.all(
-      all.map(async (v) => {
-        const content = (await readVersion(target.repoDir, target.relPath, v.oid)) || ''
-        return {
-          id: v.oid,
-          noteId: note.id,
-          title: note.title,
-          content,
-          timestamp: new Date(v.timestamp).toISOString(),
-          action: 'edit' as const,
-          oid: v.oid,
-          repoDir: target.repoDir,
-          relPath: target.relPath,
+      // 读取每个版本的真实内容用于预览（串行读取，避免大量并发 git readBlob 导致 WebView 卡死）
+      const entries: any[] = []
+      for (const v of all) {
+        try {
+          const content = (await readVersion(target.repoDir, target.relPath, v.oid)) || ''
+          entries.push({
+            id: v.oid,
+            noteId: note.id,
+            title: note.title,
+            content,
+            timestamp: new Date(v.timestamp).toISOString(),
+            action: 'edit' as const,
+            oid: v.oid,
+            repoDir: target.repoDir,
+            relPath: target.relPath,
+          })
+        } catch (err) {
+          console.warn('[History] readVersion skipped for', v.oid, err)
         }
-      })
-    )
+      }
 
-    setHistory(entries)
-    setShowHistory(true)
+      setHistory(entries)
+    } catch (err) {
+      console.error('[History] handleOpenHistory failed:', err)
+      showToast('打开历史记录失败：' + (err instanceof Error ? err.message : String(err)), 'error')
+    } finally {
+      setShowHistory(true)
+    }
   }
 
   // Close export menu when clicking outside
