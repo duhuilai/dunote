@@ -25,11 +25,8 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
   const [previewHistory, setPreviewHistory] = useState<any | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
 
-  if (!showHistory) return null
-
-  const noteHistory = history.filter((h) => h.noteId === selectedNoteId)
-
   // 预览时也要从 git 读取真实内容（git 备份模式下 history.content 可能为空）
+  // ⚠️ 必须在 early return 之前调用，否则违反 Hooks 规则（React error #310）
   const handlePreview = useCallback(async (entry: any) => {
     try {
       let content = entry.content
@@ -53,6 +50,10 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
       console.error('[HistoryModal] handlePreview failed:', err)
     }
   }, [updateHistoryContent])
+
+  if (!showHistory) return null
+
+  const noteHistory = history.filter((h) => h.noteId === selectedNoteId)
 
   const handleRestore = async (historyId: string) => {
     try {
