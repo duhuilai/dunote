@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useAppStore } from '@/store'
 import { readVersion } from '@/utils/gitBackup'
+import { renderDataTablesInHTML } from '@/utils/dataTablePreview'
 import { X, Clock, RotateCcw, Trash2, Eye, Loader2 } from 'lucide-react'
 
 /* ─── Color Tokens ─── */
@@ -433,7 +434,7 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
               ) : (
                 <div
                   className="tiptap-preview"
-                  dangerouslySetInnerHTML={{ __html: previewHistory.content || '<p style="color:#94A3B8">（无内容）</p>' }}
+                  dangerouslySetInnerHTML={{ __html: renderDataTablesInHTML(previewHistory.content || '<p style="color:#94A3B8">（无内容）</p>') }}
                   style={{
                     fontSize: '14px',
                     lineHeight: '1.6',
