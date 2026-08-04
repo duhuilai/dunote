@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.2.14"
+version = "0.2.15"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -28,3 +28,6 @@ tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-http = "2"
 tauri-plugin-process = "2"
+# 持久化运行时文件系统 scope：用户通过对话框授权过的目录在重启 / 升级后依然有效
+# macOS 上会以 security-scoped bookmark 形式保存，避免每次都要重新选择文件夹
+tauri-plugin-persisted-scope = "2"

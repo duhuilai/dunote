@@ -9,6 +9,8 @@ export interface Note {
   createdAt: string;
   updatedAt: string;
   noteType?: string;
+  /** 手动排序序号（越小越靠前），未设置时按文件名排序 */
+  order?: number;
   _isLocalFile?: boolean;
 }
 
@@ -19,6 +21,8 @@ export interface NoteFolder {
   children?: NoteFolder[];
   expanded?: boolean;
   path?: string;
+  /** 手动排序序号（越小越靠前），未设置时按名称排序 */
+  order?: number;
 }
 
 export interface NoteHistory {
@@ -46,6 +50,7 @@ export interface Person {
   name: string;
   position: string;
   hireDate: string;
+  resignDate?: string;
   monthlySalary: number;
   phone: string;
   status: 'active' | 'resigned';

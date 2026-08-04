@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '@/store'
-import { Clock, CheckCircle2, AlertCircle, User, Calendar, Users as UsersIcon, X, Star, Plus } from 'lucide-react'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { isOverdue } from '@/utils/taskUtils'
+import DateField from '@/components/ui/DateField'
+import { Clock, CheckCircle2, AlertCircle, User, Calendar, Users as UsersIcon, X, Star, Plus, Trash2 } from 'lucide-react'
 
 const colors = {
   primary: '#2563EB',
@@ -20,6 +23,17 @@ const colors = {
   surface: '#FFFFFF',
 }
 
+// 与 DateField 组件共享的配色（中文日期选择器，与人员管理一致）
+const dateFieldColors = {
+  text: colors.text,
+  textMuted: colors.textMuted,
+  textSecondary: colors.textSecondary,
+  border: colors.border,
+  surface: colors.surface,
+  primary: colors.primary,
+  bg: colors.bg,
+}
+
 const statusConfig = {
   pending: { label: '待开始', icon: AlertCircle, color: colors.warning, bg: colors.warningLight },
   running: { label: '进行中', icon: Clock, color: colors.primary, bg: '#EFF6FF' },
@@ -27,8 +41,10 @@ const statusConfig = {
 }
 
 export default function TasksPage() {
-  const { tasks, updateTask, addTask, personnel } = useAppStore()
-  const [filter, setFilter] = useState<'all' | 'pending' | 'running' | 'completed'>('all')
+  const { tasks, updateTask, addTask, deleteTask, showToast, personnel } = useAppStore()
+  const confirm = useConfirm()
+  const [filter, setFilter] = useState<'all' | 'pending' | 'running' | 'completed'>('running')
+  const [personFilter, setPersonFilter] = useState('')
   const [selectedTask, setSelectedTask] = useState<string | null>(null)
   const [evalForm, setEvalForm] = useState({ evaluation: '', score: 0 })
   const [showCreate, setShowCreate] = useState(false)
@@ -54,7 +70,11 @@ export default function TasksPage() {
     progress: 0,
   })
 
-  const filteredTasks = filter === 'all' ? tasks : tasks.filter((t) => t.status === filter)
+  const filteredTasks = tasks.filter((t) => {
+    if (filter !== 'all' && t.status !== filter) return false
+    if (personFilter && t.responsiblePerson !== personFilter && !t.participants.includes(personFilter)) return false
+    return true
+  })
 
   const tabs = [
     { key: 'all' as const, label: '全部', count: tasks.length },
@@ -132,6 +152,39 @@ export default function TasksPage() {
     setShowCreate(false)
   }
 
+  // 删除任务（带二次确认）
+  const handleDelete = async (id: string) => {
+    const target = tasks.find((x) => x.id === id)
+    const ok = await confirm({
+      title: '删除任务',
+      message: `确定删除任务「${target?.name ?? ''}」吗？此操作不可恢复。`,
+      confirmText: '删除',
+      danger: true,
+    })
+    if (!ok) return
+    deleteTask(id)
+    showToast('任务已删除', 'success')
+    if (selectedTask === id) {
+      setSelectedTask(null)
+      setEvalForm({ evaluation: '', score: 0 })
+      setIsEditing(false)
+    }
+  }
+
+  // 弹窗内进度条可直接修改并自动保存（防抖落盘）
+  const [progressInput, setProgressInput] = useState(0)
+  const progressTimer = useRef<number | null>(null)
+  useEffect(() => {
+    setProgressInput(task?.progress ?? 0)
+  }, [task?.id, task?.progress])
+  const handleProgressChange = (val: number) => {
+    setProgressInput(val)
+    if (progressTimer.current) window.clearTimeout(progressTimer.current)
+    progressTimer.current = window.setTimeout(() => {
+      if (selectedTask) updateTask(selectedTask, { progress: val })
+    }, 500)
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
@@ -158,41 +211,56 @@ export default function TasksPage() {
             新建任务
           </button>
         </div>
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: '4px', background: colors.bg, borderRadius: '8px', padding: '4px' }}>
-          {tabs.map((tab) => {
-            const isActive = filter === tab.key
-            return (
-              <button
-                key={tab.key}
-                onClick={() => setFilter(tab.key)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '8px 16px',
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                  background: isActive ? colors.surface : 'transparent',
-                  color: isActive ? colors.primary : colors.textSecondary,
-                  boxShadow: isActive ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
-                }}
-              >
-                {tab.label}
-                <span style={{
-                  fontSize: '11px',
-                  padding: '2px 6px',
-                  borderRadius: '9999px',
-                  background: isActive ? colors.primaryLight : '#F1F5F9',
-                  color: isActive ? colors.primary : colors.textMuted,
-                }}>{tab.count}</span>
-              </button>
-            )
-          })}
+        {/* Tabs + 按人员筛选 */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '4px', background: colors.bg, borderRadius: '8px', padding: '4px' }}>
+            {tabs.map((tab) => {
+              const isActive = filter === tab.key
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setFilter(tab.key)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    background: isActive ? colors.surface : 'transparent',
+                    color: isActive ? colors.primary : colors.textSecondary,
+                    boxShadow: isActive ? '0 1px 2px rgba(0,0,0,0.05)' : 'none',
+                  }}
+                >
+                  {tab.label}
+                  <span style={{
+                    fontSize: '11px',
+                    padding: '2px 6px',
+                    borderRadius: '9999px',
+                    background: isActive ? colors.primaryLight : '#F1F5F9',
+                    color: isActive ? colors.primary : colors.textMuted,
+                  }}>{tab.count}</span>
+                </button>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <User size={14} style={{ color: colors.textMuted }} />
+            <select
+              value={personFilter}
+              onChange={(e) => setPersonFilter(e.target.value)}
+              style={{ padding: '7px 10px', borderRadius: '8px', border: `1px solid ${colors.border}`, fontSize: '13px', outline: 'none', fontFamily: 'inherit', color: colors.text, background: colors.surface, cursor: 'pointer', maxWidth: '180px' }}
+            >
+              <option value="">全部人员</option>
+              {personnel.map((p) => (
+                <option key={p.id} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -202,7 +270,8 @@ export default function TasksPage() {
           {filteredTasks.map((t) => {
             const cfg = statusConfig[t.status]
             const StatusIcon = cfg.icon
-            const progressColor = t.status === 'completed' ? colors.success : t.status === 'running' ? colors.primary : '#E2E8F0'
+            const overdue = isOverdue(t)
+            const progressColor = overdue ? colors.danger : t.status === 'completed' ? colors.success : t.status === 'running' ? colors.primary : '#E2E8F0'
             return (
               <div
                 key={t.id}
@@ -214,9 +283,25 @@ export default function TasksPage() {
                     <StatusIcon size={18} style={{ color: cfg.color }} />
                     <h3 style={{ fontSize: '15px', fontWeight: 600, color: colors.text, margin: 0 }}>{t.name}</h3>
                   </div>
-                  <span style={{ padding: '4px 10px', borderRadius: '9999px', fontSize: '11px', fontWeight: 500, background: cfg.bg, color: cfg.color }}>
-                    {cfg.label}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {overdue && (
+                      <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 600, background: colors.danger, color: '#fff' }}>
+                        超期
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDelete(t.id) }}
+                      title="删除任务"
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', borderRadius: '6px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.1)' }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                    >
+                      <Trash2 size={15} style={{ color: colors.textMuted }} />
+                    </button>
+                    <span style={{ padding: '4px 10px', borderRadius: '9999px', fontSize: '11px', fontWeight: 500, background: cfg.bg, color: cfg.color }}>
+                      {cfg.label}
+                    </span>
+                  </div>
                 </div>
                 <p style={{ fontSize: '13px', color: colors.textSecondary, marginBottom: '16px', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{t.content}</p>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '12px', fontSize: '12px', color: colors.textMuted }}>
@@ -236,6 +321,11 @@ export default function TasksPage() {
               </div>
             )
           })}
+          {filteredTasks.length === 0 && (
+            <div style={{ padding: '48px 0', textAlign: 'center', color: colors.textMuted, fontSize: '13px' }}>
+              没有符合条件的任务
+            </div>
+          )}
         </div>
       </div>
 
@@ -248,6 +338,11 @@ export default function TasksPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {(() => { const I = statusConfig[task.status].icon; return <I size={18} style={{ color: statusConfig[task.status].color }} /> })()}
                 <h3 style={{ fontSize: '16px', fontWeight: 600, color: colors.text, margin: 0 }}>{task.name}</h3>
+                {isOverdue(task) && (
+                  <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 600, background: colors.danger, color: '#fff' }}>
+                    超期
+                  </span>
+                )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {!isEditing && (
@@ -258,6 +353,13 @@ export default function TasksPage() {
                     编辑
                   </button>
                 )}
+                <button
+                  onClick={() => handleDelete(task.id)}
+                  title="删除任务"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px', borderRadius: '6px', border: `1px solid ${colors.border}`, background: colors.surface, cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  <Trash2 size={16} style={{ color: colors.danger }} />
+                </button>
                 <button onClick={() => { setSelectedTask(null); setEvalForm({ evaluation: '', score: 0 }); setIsEditing(false) }} style={{ padding: '4px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>
                   <X size={18} style={{ color: colors.textMuted }} />
                 </button>
@@ -329,10 +431,10 @@ export default function TasksPage() {
                   </Field>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
                     <Field label="开始时间">
-                      <input type="date" value={editForm.startTime} onChange={(e) => setEditForm({ ...editForm, startTime: e.target.value })} style={inputStyle} />
+                      <DateField value={editForm.startTime} onChange={(v) => setEditForm({ ...editForm, startTime: v })} placeholder="选择开始时间" colors={dateFieldColors} />
                     </Field>
                     <Field label="预计完成">
-                      <input type="date" value={editForm.expectedEndTime} onChange={(e) => setEditForm({ ...editForm, expectedEndTime: e.target.value })} style={inputStyle} />
+                      <DateField value={editForm.expectedEndTime} onChange={(v) => setEditForm({ ...editForm, expectedEndTime: v })} placeholder="选择预计完成时间" colors={dateFieldColors} />
                     </Field>
                   </div>
                   <Field label="状态">
@@ -384,15 +486,25 @@ export default function TasksPage() {
                     <InfoRow icon={<Calendar size={14} />} label="预计完成" value={task.expectedEndTime} />
                     {task.completionDate && <InfoRow icon={<CheckCircle2 size={14} />} label="实际完成" value={task.completionDate} />}
                   </div>
-                  {/* Progress */}
+                  {/* Progress - 可直接拖动修改，自动保存 */}
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <label style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary }}>进度</label>
-                      <span style={{ fontSize: '13px', fontWeight: 600, color: colors.text }}>{task.progress}%</span>
+                      <label style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary }}>进度（修改后自动保存）</label>
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: isOverdue(task) ? colors.danger : colors.text }}>{progressInput}%</span>
                     </div>
                     <div style={{ height: '10px', background: colors.bg, borderRadius: '9999px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', borderRadius: '9999px', background: task.status === 'completed' ? colors.success : colors.primary, width: `${task.progress}%` }} />
+                      <div style={{ height: '100%', borderRadius: '9999px', background: isOverdue(task) ? colors.danger : task.status === 'completed' ? colors.success : colors.primary, width: `${progressInput}%` }} />
                     </div>
+                    {task.status !== 'completed' && (
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={progressInput}
+                        onChange={(e) => handleProgressChange(Number(e.target.value))}
+                        style={{ width: '100%', marginTop: '12px' }}
+                      />
+                    )}
                   </div>
 
                   {/* Evaluation (for completed tasks) */}
@@ -518,10 +630,10 @@ export default function TasksPage() {
               </Field>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
                 <Field label="开始时间">
-                  <input type="date" value={createForm.startTime} onChange={(e) => setCreateForm({ ...createForm, startTime: e.target.value })} style={inputStyle} />
+                  <DateField value={createForm.startTime} onChange={(v) => setCreateForm({ ...createForm, startTime: v })} placeholder="选择开始时间" colors={dateFieldColors} />
                 </Field>
                 <Field label="预计完成">
-                  <input type="date" value={createForm.expectedEndTime} onChange={(e) => setCreateForm({ ...createForm, expectedEndTime: e.target.value })} style={inputStyle} />
+                  <DateField value={createForm.expectedEndTime} onChange={(v) => setCreateForm({ ...createForm, expectedEndTime: v })} placeholder="选择预计完成时间" colors={dateFieldColors} />
                 </Field>
               </div>
               <Field label="状态">

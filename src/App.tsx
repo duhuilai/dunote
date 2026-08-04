@@ -10,6 +10,7 @@ import TasksPage from '@/components/tasks/TasksPage'
 import AnalyticsPage from '@/components/analytics/AnalyticsPage'
 import SettingsPage from '@/components/settings/SettingsPage'
 import Toast from '@/components/ui/Toast'
+import OverdueNotifier from '@/components/ui/OverdueNotifier'
 import { ConfirmProvider } from '@/components/ui/ConfirmDialog'
 import ErrorBoundary from '@/components/ui/ErrorBoundary'
 
@@ -83,6 +84,7 @@ function App() {
           </ErrorBoundary>
         </div>
         <Toast />
+        <OverdueNotifier />
       </div>
     </ConfirmProvider>
   )

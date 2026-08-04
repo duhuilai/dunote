@@ -3,7 +3,8 @@ import { useAppStore } from '@/store'
 import {
   Search, Plus, ChevronDown, ChevronRight, ChevronRight as ChevronRightIcon, Folder,
   Clock, Upload, Download, Trash2, Edit3, PanelRightOpen, PanelRightClose,
-  FileText, FileCode, FileType, Users, BookOpen, ExternalLink, FolderOpen
+  FileText, FileCode, FileType, Users, BookOpen, ExternalLink, FolderOpen,
+  ArrowUp, ArrowDown
 } from 'lucide-react'
 import NoteEditor from './NoteEditor'
 import HistoryModal from './HistoryModal'
@@ -15,6 +16,7 @@ import { appConfigDir, join, dirname } from '@tauri-apps/api/path'
 import { open as shellOpen } from '@tauri-apps/plugin-shell'
 import { marked } from 'marked'
 import { loadNoteTypes, saveNoteType, toRelPath } from '@/utils/noteMeta'
+import { loadOrderData, applyOrder, orderOf, compareByOrder, reorderIds, shiftId } from '@/utils/noteOrder'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 
 /* ─── Color Tokens ─── */
@@ -64,14 +66,23 @@ function getTemplateContent(typeKey: string, title: string): string {
 }
 
 /* ── Note Item (inside folder) ─── */
-function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect, level = 0 }: {
+function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect, level = 0, dragProps, dropHint, isDragging }: {
   note: any; isActive: boolean; onSelect: () => void; onContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void; level?: number
+  dragProps?: React.HTMLAttributes<HTMLElement> & { draggable?: boolean }
+  dropHint?: 'top' | 'bottom' | null
+  isDragging?: boolean
 }) {
   const noteType = getNoteType(note.noteType)
   const TypeIcon = noteType.icon
   const noteIndent = 28 + level * 20
+  const hintShadow = dropHint === 'top'
+    ? `inset 0 2px 0 0 ${C.primary}`
+    : dropHint === 'bottom'
+      ? `inset 0 -2px 0 0 ${C.primary}`
+      : 'none'
   return (
     <button
+      {...dragProps}
       onClick={() => {
         onSelect()
         // If this is a local file and we have a handler, load the file content
@@ -92,6 +103,8 @@ function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect, level
         background: isActive ? C.primaryLight : 'transparent',
         display: 'block',
         transition: 'background 0.15s, border-color 0.15s',
+        boxShadow: hintShadow,
+        opacity: isDragging ? 0.4 : 1,
       }}
       onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = '#F1F5F9' }}
       onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
@@ -118,14 +131,57 @@ function NoteItem({ note, isActive, onSelect, onContextMenu, onNoteSelect, level
 }
 
 /* ─── Folder Tree (with notes inside) ─── */
-function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, onCreateSubFolder, onDeleteFolder, onFolderContextMenu, level = 0 }: {
-  folders: any[]; filteredNotes: any[]; onNoteContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void; onCreateSubFolder?: (parentPath: string) => void; onDeleteFolder?: (folder: any) => void; onFolderContextMenu?: (e: React.MouseEvent, folder: any) => void; level?: number
+function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, onCreateSubFolder, onDeleteFolder, onFolderContextMenu, onReorderNotes, onReorderFolders, level = 0 }: {
+  folders: any[]; filteredNotes: any[]; onNoteContextMenu: (e: React.MouseEvent, note: any) => void; onNoteSelect?: (noteId: string, filePath: string) => void; onCreateSubFolder?: (parentPath: string) => void; onDeleteFolder?: (folder: any) => void; onFolderContextMenu?: (e: React.MouseEvent, folder: any) => void
+  onReorderNotes?: (folderId: string, orderedIds: string[]) => void
+  onReorderFolders?: (parentId: string | null, orderedIds: string[]) => void
+  level?: number
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ f1: true, f2: true, 'local-root': true })
   const selectedFolderId = useAppStore((s) => s.selectedFolderId)
   const setSelectedFolderId = useAppStore((s) => s.setSelectedFolderId)
   const selectedNoteId = useAppStore((s) => s.selectedNoteId)
   const setSelectedNoteId = useAppStore((s) => s.setSelectedNoteId)
+
+  /* ── 拖拽排序（仅同级：同一文件夹内的笔记 / 同一父级下的文件夹） ── */
+  const [drag, setDrag] = useState<{ kind: 'note' | 'folder'; id: string; scope: string } | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ id: string; pos: 'top' | 'bottom' } | null>(null)
+
+  const beginDrag = (e: React.DragEvent, kind: 'note' | 'folder', id: string, scope: string) => {
+    e.stopPropagation()
+    setDrag({ kind, id, scope })
+    try {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', id)
+    } catch { /* Safari 下 setData 可能抛错，忽略 */ }
+  }
+
+  const hoverDrag = (e: React.DragEvent, kind: 'note' | 'folder', id: string, scope: string, siblingIds: string[]) => {
+    if (!drag || drag.kind !== kind || drag.scope !== scope || drag.id === id) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    // 指示线与真实落点保持一致：向下拖 → 插到目标之后；向上拖 → 插到目标之前
+    const pos: 'top' | 'bottom' = siblingIds.indexOf(drag.id) < siblingIds.indexOf(id) ? 'bottom' : 'top'
+    setDropTarget((prev) => (prev?.id === id && prev.pos === pos ? prev : { id, pos }))
+  }
+
+  const endDrag = () => { setDrag(null); setDropTarget(null) }
+
+  const dropOn = (e: React.DragEvent, kind: 'note' | 'folder', id: string, scope: string, siblingIds: string[]) => {
+    if (!drag || drag.kind !== kind || drag.scope !== scope || drag.id === id) { endDrag(); return }
+    e.preventDefault()
+    e.stopPropagation()
+    const next = reorderIds(siblingIds, drag.id, id)
+    if (next !== siblingIds) {
+      if (kind === 'note') onReorderNotes?.(scope, next)
+      else onReorderFolders?.(scope === '__root__' ? null : scope, next)
+    }
+    endDrag()
+  }
+
+  const hintFor = (id: string): 'top' | 'bottom' | null =>
+    dropTarget?.id === id ? dropTarget.pos : null
 
   // Sync expanded state when folders prop changes (e.g., when switching to local folders)
   useEffect(() => {
@@ -165,13 +221,23 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
     }
   }, [])
 
+  const siblingFolderIds = folders.map((f: any) => f.id)
+  const folderScope = folders.length ? (folders[0].parentId ?? '__root__') : '__root__'
+  const foldersDraggable = !!onReorderFolders && folders.length > 1
+
   return (
     <>
       {folders.map((f) => {
         const isSelected = selectedFolderId === f.id
         const isExpanded = expanded[f.id] ?? false
         // Get notes in this folder (use filtered if searching, otherwise all)
-        const folderNotes = filteredNotes.filter((n) => n.folderId === f.id)
+        const folderNotes = filteredNotes
+          .filter((n) => n.folderId === f.id)
+          .slice()
+          .sort(compareByOrder<any>((n) => (typeof n.order === 'number' ? n.order : Number.MAX_SAFE_INTEGER), (n) => n.title || ''))
+        const folderNoteIds = folderNotes.map((n: any) => n.id)
+        const notesDraggable = !!onReorderNotes && folderNotes.length > 1
+        const folderHint = hintFor(f.id)
         // Collect child folder ids recursively
         const getChildFolderIds = (folder: any): string[] => {
           if (!folder.children?.length) return []
@@ -186,6 +252,11 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
           <div key={f.id}>
             <div
               className="folder-row"
+              draggable={foldersDraggable}
+              onDragStart={foldersDraggable ? (e) => beginDrag(e, 'folder', f.id, folderScope) : undefined}
+              onDragOver={foldersDraggable ? (e) => hoverDrag(e, 'folder', f.id, folderScope, siblingFolderIds) : undefined}
+              onDrop={foldersDraggable ? (e) => dropOn(e, 'folder', f.id, folderScope, siblingFolderIds) : undefined}
+              onDragEnd={foldersDraggable ? endDrag : undefined}
               onContextMenu={(e) => {
                 if (onFolderContextMenu) {
                   e.preventDefault()
@@ -199,6 +270,12 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
                 padding: '3px 12px',
                 paddingLeft: `${10 + level * 20}px`,
                 gap: '2px',
+                boxShadow: folderHint === 'top'
+                  ? `inset 0 2px 0 0 ${C.primary}`
+                  : folderHint === 'bottom'
+                    ? `inset 0 -2px 0 0 ${C.primary}`
+                    : 'none',
+                opacity: drag?.kind === 'folder' && drag.id === f.id ? 0.4 : 1,
               }}
             >
               {/* Expand/Collapse button */}
@@ -375,6 +452,15 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
                     onContextMenu={onNoteContextMenu}
                     onNoteSelect={onNoteSelect}
                     level={level + 1}
+                    dropHint={hintFor(note.id)}
+                    isDragging={drag?.kind === 'note' && drag.id === note.id}
+                    dragProps={notesDraggable ? {
+                      draggable: true,
+                      onDragStart: (e: any) => beginDrag(e, 'note', note.id, f.id),
+                      onDragOver: (e: any) => hoverDrag(e, 'note', note.id, f.id, folderNoteIds),
+                      onDrop: (e: any) => dropOn(e, 'note', note.id, f.id, folderNoteIds),
+                      onDragEnd: endDrag,
+                    } : undefined}
                   />
                 ))}
                 {/* Sub-folders */}
@@ -387,6 +473,8 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
                     onCreateSubFolder={onCreateSubFolder}
                     onDeleteFolder={onDeleteFolder}
                     onFolderContextMenu={onFolderContextMenu}
+                    onReorderNotes={onReorderNotes}
+                    onReorderFolders={onReorderFolders}
                     level={level + 1} 
                   />
                 ) : null}
@@ -400,8 +488,8 @@ function FolderTree({ folders, filteredNotes, onNoteContextMenu, onNoteSelect, o
 }
 
 /* ─── Context Menu ─── */
-function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile, onChangeType }: {
-  x: number; y: number; note: any; onClose: () => void; onDelete: (note: any) => void; onRevealFile?: (filePath: string) => void; onChangeType?: (note: any, type: string) => void
+function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile, onChangeType, onMove }: {
+  x: number; y: number; note: any; onClose: () => void; onDelete: (note: any) => void; onRevealFile?: (filePath: string) => void; onChangeType?: (note: any, type: string) => void; onMove?: (note: any, delta: -1 | 1) => void
 }) {
   const [showExportSubmenu, setShowExportSubmenu] = useState(false)
   const [showTypeSubmenu, setShowTypeSubmenu] = useState(false)
@@ -436,6 +524,8 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile, onChangeType
   const canReveal = !!note?._isLocalFile && !!note?.filePath
 
   const menuItems = [
+    { icon: ArrowUp, label: '上移', action: () => onMove?.(note, -1), danger: false, show: !!onMove },
+    { icon: ArrowDown, label: '下移', action: () => onMove?.(note, 1), danger: false, show: !!onMove },
     { icon: Download, label: '导出为...', action: () => setShowExportSubmenu(true), hasSubmenu: true, danger: false },
     { icon: FolderOpen, label: '在文件夹查看', action: () => { if (note?.filePath) onRevealFile?.(note.filePath); onClose() }, danger: false, show: canReveal },
     { icon: Edit3, label: '修改笔记类型', action: () => setShowTypeSubmenu(true), hasSubmenu: true, danger: false },
@@ -634,7 +724,23 @@ function ContextMenu({ x, y, note, onClose, onDelete, onRevealFile, onChangeType
 }
 
 /* ─── Folder Context Menu ─── */
-function FolderContextMenu({ x, y, folder, onClose, onImport, onRevealFolder }: { x: number; y: number; folder: any; onClose: () => void; onImport: (folder: any) => void; onRevealFolder?: (path: string) => void }) {
+function FolderContextMenu({ x, y, folder, onClose, onImport, onRevealFolder, onMove }: { x: number; y: number; folder: any; onClose: () => void; onImport: (folder: any) => void; onRevealFolder?: (path: string) => void; onMove?: (folder: any, delta: -1 | 1) => void }) {
+  const itemStyle: React.CSSProperties = {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '8px 14px',
+    fontSize: '13px',
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    textAlign: 'left',
+    fontFamily: 'inherit',
+    color: C.text,
+    transition: 'background 0.15s',
+  }
+  const canMove = !!onMove && folder?.id !== 'local-root'
   return (
     <div
       style={{
@@ -651,6 +757,28 @@ function FolderContextMenu({ x, y, folder, onClose, onImport, onRevealFolder }: 
       }}
       onMouseLeave={onClose}
     >
+      {canMove && (
+        <>
+          <button
+            onClick={() => { onMove?.(folder, -1); onClose() }}
+            style={itemStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+          >
+            <ArrowUp size={15} />
+            <span style={{ flex: 1 }}>上移</span>
+          </button>
+          <button
+            onClick={() => { onMove?.(folder, 1); onClose() }}
+            style={itemStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+          >
+            <ArrowDown size={15} />
+            <span style={{ flex: 1 }}>下移</span>
+          </button>
+        </>
+      )}
       <button
         onClick={() => { onImport(folder); onClose() }}
         style={{
@@ -797,6 +925,8 @@ export default function NotesPage() {
   const [localNotes, setLocalNotes] = useState<import('@/types').Note[]>([])
   // 恢复历史后 +1，强制 NoteEditor 重新加载当前笔记内容（note.id 不变时也刷新）
   const [reloadToken, setReloadToken] = useState(0)
+  // 上次打开的文件夹无法访问（macOS 升级后 TCC 授权失效 / 目录被移动删除）时的提示
+  const [folderAccessError, setFolderAccessError] = useState<string | null>(null)
 
   // 将当前打开的本地根文件夹同步到全局 store，供 Gitee 同步按相对路径分层存储
   const setLocalRootFolder = useAppStore((s) => s.setLocalRootFolder)
@@ -828,6 +958,16 @@ export default function NotesPage() {
           const config = JSON.parse(raw)
           if (config.lastLocalFolder) {
             console.log(`[Persistence] Restoring folder: ${config.lastLocalFolder}`)
+            // 先探测根目录是否真的可读：macOS 上 App 升级后代码签名变化会导致
+            // 系统撤销之前授予的文件夹访问权限（TCC），此时 readDir 会直接抛错。
+            // 不探测的话只会得到一棵空树，用户会以为笔记全丢了。
+            try {
+              await readDir(config.lastLocalFolder)
+            } catch (probeErr) {
+              console.warn('[Persistence] Folder not accessible:', probeErr)
+              setFolderAccessError(config.lastLocalFolder)
+              return
+            }
             // Re-scan the saved folder to rebuild the tree
             const result = await scanDirectory(config.lastLocalFolder, null, config.lastLocalFolder)
             const rootFolderName = config.lastLocalFolder.split('/').pop() || config.lastLocalFolder.split('\\').pop() || config.lastLocalFolder
@@ -1011,19 +1151,32 @@ export default function NotesPage() {
     const folders: import('@/types').NoteFolder[] = []
     const notes: import('@/types').Note[] = []
     const noteTypeMap = await loadNoteTypes(dirPath)
+    // 手动排序表（相对路径 -> 序号），未记录的条目回落名称序并排在最后
+    const orderData = await loadOrderData(dirPath)
 
     const scan = async (currentPath: string, currentParentId: string | null): Promise<void> => {
       try {
         console.log(`[scanDirectory] Reading: ${currentPath}`)
         const entries = await readDir(currentPath)
         console.log(`[scanDirectory] Found ${entries.length} entries in ${currentPath}:`, entries.map(e => ({ name: e.name, isDirectory: e.isDirectory })))
-        
-        // Sort: directories first, then files, alphabetically within each group
-        const dirs = entries.filter(e => e.isDirectory).sort((a, b) => a.name.localeCompare(b.name))
-        const files = entries.filter(e => e.isFile).sort((a, b) => a.name.localeCompare(b.name))
+
+        // Sort: directories first, then files；组内先按手动排序，再按名称
+        const dirs = entries.filter(e => e.isDirectory).sort(
+          compareByOrder(
+            (e: any) => orderOf(orderData.folders, toRelPath(dirPath, currentPath + '/' + e.name)),
+            (e: any) => e.name,
+          ),
+        )
+        const files = entries.filter(e => e.isFile).sort(
+          compareByOrder(
+            (e: any) => orderOf(orderData.notes, toRelPath(dirPath, currentPath + '/' + e.name)),
+            (e: any) => e.name,
+          ),
+        )
         console.log(`[scanDirectory] Dirs: ${dirs.length}, Files: ${files.length}`)
 
         // Process files
+        let noteIdx = 0
         for (const entry of files) {
           const name = entry.name.toLowerCase()
           if (name.endsWith('.html')) {
@@ -1040,12 +1193,14 @@ export default function NotesPage() {
               noteType: noteTypeMap[relPath] || 'normal',
               folderId: currentParentId || 'local-root',
               tags: [] as string[],
+              order: noteIdx++,
               _isLocalFile: true,
             } as any)
           }
         }
 
         // Process subdirectories recursively
+        let folderIdx = 0
         for (const dir of dirs) {
           // Skip hidden directories
           if (dir.name.startsWith('.')) continue
@@ -1059,6 +1214,7 @@ export default function NotesPage() {
             path: subPath,
             expanded: false,
             children: [],
+            order: folderIdx++,
           })
           await scan(subPath, folderId)
         }
@@ -1085,6 +1241,98 @@ export default function NotesPage() {
     })
   }, [])
 
+  /* ─── 笔记 / 文件夹手动排序 ─── */
+
+  // 重排某个文件夹内的笔记：更新内存顺序 + 写入 .dunote-order.json
+  const handleReorderNotes = useCallback(async (folderId: string, orderedIds: string[]) => {
+    const root = selectedLocalFolder
+    if (!root) return
+    const rank = new Map(orderedIds.map((id, i) => [id, i]))
+    setLocalNotes((prev) => {
+      const scoped = prev
+        .filter((n) => rank.has(n.id))
+        .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+        .map((n) => ({ ...n, order: rank.get(n.id) ?? 0 }))
+      let k = 0
+      return prev.map((n) => (rank.has(n.id) ? scoped[k++] : n))
+    })
+    try {
+      const byId = new Map(localNotes.map((n) => [n.id, n]))
+      const entries: Record<string, number> = {}
+      orderedIds.forEach((id, i) => {
+        const n = byId.get(id)
+        if (n?.filePath) entries[toRelPath(root, n.filePath)] = i
+      })
+      await applyOrder(root, 'notes', entries)
+    } catch (err) {
+      console.error('[Order] 保存笔记排序失败:', err)
+      showToast('保存排序失败', 'error')
+    }
+  }, [selectedLocalFolder, localNotes, showToast])
+
+  // 重排同一父级下的文件夹
+  const handleReorderFolders = useCallback(async (parentId: string | null, orderedIds: string[]) => {
+    const root = selectedLocalFolder
+    if (!root) return
+    const rank = new Map(orderedIds.map((id, i) => [id, i]))
+    const sortSiblings = (list: import('@/types').NoteFolder[]) =>
+      list
+        .slice()
+        .sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0))
+        .map((f) => ({ ...f, order: rank.get(f.id) ?? f.order }))
+    const walk = (list: import('@/types').NoteFolder[], currentParent: string | null): import('@/types').NoteFolder[] => {
+      const next = currentParent === parentId ? sortSiblings(list) : list
+      return next.map((f) => ({
+        ...f,
+        children: f.children?.length ? walk(f.children, f.id) : f.children,
+      }))
+    }
+    setLocalFolders((prev) => walk(prev, null))
+    try {
+      const entries: Record<string, number> = {}
+      const collect = (list: import('@/types').NoteFolder[]) => {
+        list.forEach((f) => {
+          if (rank.has(f.id) && f.path) entries[toRelPath(root, f.path)] = rank.get(f.id)!
+          if (f.children?.length) collect(f.children)
+        })
+      }
+      collect(localFolders)
+      await applyOrder(root, 'folders', entries)
+    } catch (err) {
+      console.error('[Order] 保存文件夹排序失败:', err)
+      showToast('保存排序失败', 'error')
+    }
+  }, [selectedLocalFolder, localFolders, showToast])
+
+  // 右键菜单「上移 / 下移」：笔记
+  const handleMoveNote = useCallback((note: any, delta: -1 | 1) => {
+    if (!selectedLocalFolder || !note) return
+    const siblings = localNotes
+      .filter((n) => n.folderId === note.folderId)
+      .slice()
+      .sort(compareByOrder<any>((n) => (typeof n.order === 'number' ? n.order : Number.MAX_SAFE_INTEGER), (n) => n.title || ''))
+      .map((n) => n.id)
+    const next = shiftId(siblings, note.id, delta)
+    if (!next) return
+    handleReorderNotes(note.folderId, next)
+  }, [selectedLocalFolder, localNotes, handleReorderNotes])
+
+  // 右键菜单「上移 / 下移」：文件夹
+  const handleMoveFolder = useCallback((folder: any, delta: -1 | 1) => {
+    if (!selectedLocalFolder || !folder) return
+    let siblings: import('@/types').NoteFolder[] | null = null
+    const find = (list: import('@/types').NoteFolder[]) => {
+      if (list.some((f) => f.id === folder.id)) { siblings = list; return }
+      list.forEach((f) => { if (f.children?.length) find(f.children) })
+    }
+    find(localFolders)
+    if (!siblings) return
+    const ids = (siblings as import('@/types').NoteFolder[]).map((f) => f.id)
+    const next = shiftId(ids, folder.id, delta)
+    if (!next) return
+    handleReorderFolders(folder.parentId ?? null, next)
+  }, [selectedLocalFolder, localFolders, handleReorderFolders])
+
   const handleSelectLocalFolder = useCallback(async () => {
     try {
       const selected = await open({
@@ -1095,7 +1343,8 @@ export default function NotesPage() {
       
       if (selected && typeof selected === 'string') {
         setSelectedLocalFolder(selected)
-        
+        setFolderAccessError(null)
+
         // Recursively scan the selected directory
         const result = await scanDirectory(selected, null, selected)
         
@@ -1698,6 +1947,45 @@ export default function NotesPage() {
           </div>
         </div>
 
+        {/* 2.5 文件夹访问被系统拒绝时的提示（macOS 升级后 TCC 授权失效） */}
+        {folderAccessError && (
+          <div
+            style={{
+              margin: '0 8px 8px',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              background: 'rgba(245,158,11,0.08)',
+              border: '1px solid rgba(245,158,11,0.35)',
+            }}
+          >
+            <div style={{ fontSize: '12.5px', fontWeight: 600, color: '#92400E', marginBottom: '4px' }}>
+              无法访问上次的笔记文件夹
+            </div>
+            <div style={{ fontSize: '11.5px', color: '#B45309', lineHeight: 1.5, wordBreak: 'break-all', marginBottom: '8px' }}>
+              {folderAccessError}
+              <br />
+              系统可能在软件更新后收回了访问授权，请重新选择同一个文件夹以恢复。
+            </div>
+            <button
+              onClick={handleSelectLocalFolder}
+              style={{
+                width: '100%',
+                padding: '6px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: '#D97706',
+                color: '#FFFFFF',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              重新授权文件夹
+            </button>
+          </div>
+        )}
+
         {/* 3. Folder Tree with notes inside */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
           <FolderTree
@@ -1708,6 +1996,8 @@ export default function NotesPage() {
             onCreateSubFolder={selectedLocalFolder ? handleCreateNewFolder : undefined}
             onDeleteFolder={selectedLocalFolder ? handleDeleteFolder : undefined}
             onFolderContextMenu={selectedLocalFolder ? handleFolderContextMenu : undefined}
+            onReorderNotes={selectedLocalFolder ? handleReorderNotes : undefined}
+            onReorderFolders={selectedLocalFolder ? handleReorderFolders : undefined}
           />
 
         </div>
@@ -1824,12 +2114,12 @@ export default function NotesPage() {
 
       {/* Context Menu */}
       {ctxMenu && (
-        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} note={ctxMenu.note} onClose={() => setCtxMenu(null)} onDelete={handleDeleteNote} onRevealFile={revealFile} onChangeType={handleChangeNoteType} />
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} note={ctxMenu.note} onClose={() => setCtxMenu(null)} onDelete={handleDeleteNote} onRevealFile={revealFile} onChangeType={handleChangeNoteType} onMove={selectedLocalFolder ? handleMoveNote : undefined} />
       )}
 
       {/* Folder Context Menu */}
       {folderCtxMenu && (
-        <FolderContextMenu x={folderCtxMenu.x} y={folderCtxMenu.y} folder={folderCtxMenu.folder} onClose={() => setFolderCtxMenu(null)} onImport={handleImportMarkdown} onRevealFolder={revealFolder} />
+        <FolderContextMenu x={folderCtxMenu.x} y={folderCtxMenu.y} folder={folderCtxMenu.folder} onClose={() => setFolderCtxMenu(null)} onImport={handleImportMarkdown} onRevealFolder={revealFolder} onMove={selectedLocalFolder ? handleMoveFolder : undefined} />
       )}
 
       {/* ─── Note Creation Dialog ─── */}

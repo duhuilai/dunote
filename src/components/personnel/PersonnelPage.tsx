@@ -20,11 +20,22 @@ const colors = {
   surface: '#FFFFFF',
 }
 
+// 与 DateField 组件共享的配色（缺省用 primaryLight）
+const dateFieldColors = {
+  text: colors.text,
+  textMuted: colors.textMuted,
+  textSecondary: colors.textSecondary,
+  border: colors.border,
+  surface: colors.surface,
+  primary: colors.primary,
+  bg: colors.bg,
+}
+
 export default function PersonnelPage() {
   const { personnel, addPerson, updatePerson, deletePerson } = useAppStore()
   const [showModal, setShowModal] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', position: '', hireDate: '', monthlySalary: '', phone: '', status: 'active' as 'active' | 'resigned' })
+  const [form, setForm] = useState({ name: '', position: '', hireDate: '', resignDate: '', monthlySalary: '', phone: '', status: 'active' as 'active' | 'resigned' })
 
   const activeCount = personnel.filter((p) => p.status === 'active').length
   const resignedCount = personnel.filter((p) => p.status === 'resigned').length
@@ -37,6 +48,7 @@ export default function PersonnelPage() {
         name: form.name,
         position: form.position,
         hireDate: form.hireDate,
+        resignDate: form.resignDate,
         monthlySalary: Number(form.monthlySalary) || 0,
         phone: form.phone,
         status: form.status,
@@ -47,12 +59,13 @@ export default function PersonnelPage() {
         name: form.name,
         position: form.position,
         hireDate: form.hireDate,
+        resignDate: form.resignDate,
         monthlySalary: Number(form.monthlySalary) || 0,
         phone: form.phone,
         status: form.status,
       })
     }
-    setForm({ name: '', position: '', hireDate: '', monthlySalary: '', phone: '', status: 'active' })
+    setForm({ name: '', position: '', hireDate: '', resignDate: '', monthlySalary: '', phone: '', status: 'active' })
     setEditingId(null)
     setShowModal(false)
   }
@@ -91,7 +104,7 @@ export default function PersonnelPage() {
         <button
           onClick={() => {
             setEditingId(null)
-            setForm({ name: '', position: '', hireDate: '', monthlySalary: '', phone: '', status: 'active' })
+            setForm({ name: '', position: '', hireDate: '', resignDate: '', monthlySalary: '', phone: '', status: 'active' })
             setShowModal(true)
           }}
           style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
@@ -117,6 +130,7 @@ export default function PersonnelPage() {
                 <th style={thStyle}>人员</th>
                 <th style={thStyle}>职位</th>
                 <th style={thStyle}>入职日期</th>
+                <th style={thStyle}>离职日期</th>
                 <th style={thStyle}>月薪</th>
                 <th style={thStyle}>电话</th>
                 <th style={thStyle}>状态</th>
@@ -136,6 +150,7 @@ export default function PersonnelPage() {
                   </td>
                   <td style={{ ...tdStyle, color: colors.textSecondary }}>{p.position}</td>
                   <td style={{ ...tdStyle, color: colors.textSecondary }}>{p.hireDate}</td>
+                  <td style={{ ...tdStyle, color: colors.textSecondary }}>{p.resignDate || '-'}</td>
                   <td style={{ ...tdStyle, color: colors.text, fontWeight: 500 }}>¥{p.monthlySalary.toLocaleString()}</td>
                   <td style={{ ...tdStyle, color: colors.textSecondary }}>{p.phone}</td>
                   <td style={tdStyle}>
@@ -160,6 +175,7 @@ export default function PersonnelPage() {
                             name: p.name,
                             position: p.position,
                             hireDate: p.hireDate,
+                            resignDate: p.resignDate ?? '',
                             monthlySalary: String(p.monthlySalary),
                             phone: p.phone,
                             status: p.status,
@@ -209,28 +225,20 @@ export default function PersonnelPage() {
               </FormField>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
                 <FormField label="入职日期" icon={<Calendar size={15} />}>
-                  <DateField
-                    value={form.hireDate}
-                    onChange={(v) => setForm({ ...form, hireDate: v })}
-                    placeholder="选择入职日期"
-                    colors={{
-                      text: colors.text,
-                      textMuted: colors.textMuted,
-                      textSecondary: colors.textSecondary,
-                      border: colors.border,
-                      surface: colors.surface,
-                      primary: colors.primary,
-                      bg: colors.bg,
-                    }}
-                  />
+                  <DateField value={form.hireDate} onChange={(v) => setForm({ ...form, hireDate: v })} placeholder="选择入职日期" colors={dateFieldColors} />
                 </FormField>
+                <FormField label="离职日期" icon={<Calendar size={15} />}>
+                  <DateField value={form.resignDate} onChange={(v) => setForm({ ...form, resignDate: v })} placeholder="选择离职日期（可选）" colors={dateFieldColors} />
+                </FormField>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
                 <FormField label="月薪" icon={<DollarSign size={15} />}>
                   <input type="number" value={form.monthlySalary} onChange={(e) => setForm({ ...form, monthlySalary: e.target.value })} style={inputStyle} placeholder="¥" />
                 </FormField>
+                <FormField label="电话" icon={<Phone size={15} />}>
+                  <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} placeholder="请输入电话号码" />
+                </FormField>
               </div>
-              <FormField label="电话" icon={<Phone size={15} />}>
-                <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} placeholder="请输入电话号码" />
-              </FormField>
               <FormField label="状态">
                 <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as any })} style={{ ...inputStyle, background: colors.surface }}>
                   <option value="active">在岗</option>
