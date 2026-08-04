@@ -1,8 +1,8 @@
-# v0.2.12
+# v0.2.13
 
-> 修复智能表格在历史记录预览中不显示内容的问题。
+> 修复智能表格文本录入时光标跳到开头、自动保存多出换行的问题。
 
 ## 修复
-- 现象：点击历史记录「预览」按钮后，笔记中的智能表格区域显示空白（只有标题等文本内容，表格不渲染）。
-- 根因：智能表格（dataTable）是 TipTap atom 节点 + React NodeView，其 `renderHTML` 只输出占位标签 `<div data-type="data-table" data-columns="..." data-rows="...">`。历史预览用 `dangerouslySetInnerHTML` 渲染原始 HTML，没有 TipTap 编辑器实例，NodeView 组件不会加载，占位标签显示为空。
-- 修复：新增 `dataTablePreview.ts` 工具函数，用 DOMParser 解析 HTML，将所有 dataTable 占位标签转换为静态 HTML 表格，支持全部 10 种字段类型（文本/数字/日期/单选/多选/人员/勾选/链接/评分/进度）的只读渲染。
+- 现象：在智能表格文本/链接单元格录入文字后，① 光标跳到文字最前面；② 自动保存导致单元格多出一行空白。
+- 根因：`CellEditor` 是受控组件，每次按键 `onChange` → `setCell` → `updateAttributes`（ProseMirror 事务）→ NodeView 重渲染 → React 重设 textarea/input 的 `value` → 光标重置到开头；同时重渲染过程中 `autoSize` 的 `height='auto'` + `scrollHeight` 读取时机错误，产生多余的空白行。
+- 修复：`CellEditor` 为 text/url 类型引入本地状态，输入时只更新本地值（不触发 ProseMirror 事务），失焦（onBlur）时才提交到文档并触发自动保存；非聚焦时从属性同步以支持撤销/重做、历史恢复等外部更新。

@@ -999,11 +999,25 @@ function CellEditor({
       el.style.height = el.scrollHeight + 'px'
     }
   }, [])
-  // 在绘制前重算：列宽变化（拖拽变窄/变宽）或内容变化都要重新撑高，
+
+  // ── 文本/URL 本地状态 ──
+  // 避免每次 onChange 都触发 ProseMirror 事务（updateAttributes）→ NodeView 重渲染 →
+  // React 重设 textarea/input 的 value → 光标重置到开头 + autoSize 抖动导致多出换行。
+  // 改为：输入时只更新本地状态，onBlur 时才提交到 ProseMirror。
+  const [localValue, setLocalValue] = useState<string>(typeof value === 'string' ? value : '')
+  const [isFocused, setIsFocused] = useState(false)
+  // 非聚焦时从 prop 同步（撤销/重做、历史恢复、列宽变化等外部更新）
+  useEffect(() => {
+    if (!isFocused && typeof value === 'string' && value !== localValue) {
+      setLocalValue(value)
+    }
+  }, [value, isFocused]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 在绘制前重算：列宽变化（拖拽变窄/变宽）或本地内容变化都要重新撑高，
   // 否则旧高度 + overflow:hidden 会把多行文本裁掉。
   useLayoutEffect(() => {
     autoSize()
-  }, [value, column.width, autoSize])
+  }, [localValue, column.width, autoSize])
   // 监听 textarea 自身宽度变化：table-layout:fixed 下列宽在父 table layout 后才最终确定，
   // 重开笔记、列宽 settling 时宽度会变化，必须据此重算高度，否则多行文本仍被截断。
   // 只响应宽度变化，忽略高度变化避免循环。
@@ -1201,12 +1215,18 @@ function CellEditor({
   }
 
   if (t === 'url') {
-    const s = (value as string) || ''
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-        <input value={s} onChange={(e) => onChange(e.target.value)} placeholder="https://" style={cellInputStyle} />
-        {s && (
-          <a href={s} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="打开链接" style={{ color: C.primary }}>
+        <input
+          value={localValue}
+          onChange={(e) => setLocalValue(e.target.value)}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => { setIsFocused(false); onChange(localValue) }}
+          placeholder="https://"
+          style={cellInputStyle}
+        />
+        {localValue && (
+          <a href={localValue} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="打开链接" style={{ color: C.primary }}>
             ↗
           </a>
         )}
@@ -1215,11 +1235,14 @@ function CellEditor({
   }
 
   // text 默认：换行文本框（超出列宽自动折行，高度随内容增长）
+  // 使用本地状态，onBlur 时才提交到 ProseMirror，避免每次按键触发事务导致光标重置
   return (
     <textarea
       ref={textRef}
-      value={(value as string) || ''}
-      onChange={(e) => onChange(e.target.value)}
+      value={localValue}
+      onChange={(e) => { setLocalValue(e.target.value); autoSize() }}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => { setIsFocused(false); onChange(localValue) }}
       onInput={autoSize}
       rows={1}
       style={{
