@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { createPortal } from 'react-dom'
 import {
   Plus, Trash2, X, ArrowUpDown, Filter, ArrowUp, ArrowDown,
-  BarChart3, MoreHorizontal, GripVertical,
+  ArrowLeft, ArrowRight, BarChart3, MoreHorizontal, GripVertical,
 } from 'lucide-react'
 import {
   type Column, type Row, type FieldType, type SelectOption, type CellValue,
@@ -49,6 +49,8 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   const [optEditorPos, setOptEditorPos] = useState<{ left: number; top: number } | null>(null)
   const [multiOpen, setMultiOpen] = useState<string | null>(null)
   const [toolPop, setToolPop] = useState<'sort' | 'filter' | null>(null)
+  const [insertPop, setInsertPop] = useState(false)
+  const [insertCount, setInsertCount] = useState(1)
 
   const tableWrapRef = useRef<HTMLDivElement>(null)
 
@@ -105,29 +107,38 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   }
 
   /* ── 行列操作 ── */
-  const addRow = () => {
-    const cells: Record<string, CellValue> = {}
-    columns.forEach((c) => (cells[c.id] = emptyValueFor(c.type)))
-    commit(columns, [...rows, { id: uid('row'), cells }])
+  // 插入多行：position='top' 在最上方、'bottom' 在最下方；count 默认 1
+  const insertRows = (count: number, position: 'top' | 'bottom') => {
+    const n = Math.max(1, Math.min(100, Math.floor(count) || 1))
+    const newRows: Row[] = Array.from({ length: n }, () => {
+      const cells: Record<string, CellValue> = {}
+      columns.forEach((c) => (cells[c.id] = emptyValueFor(c.type)))
+      return { id: uid('row'), cells }
+    })
+    commit(columns, position === 'top' ? [...newRows, ...rows] : [...rows, ...newRows])
   }
 
   const deleteRow = (rowId: string) => {
     commit(columns, rows.filter((r) => r.id !== rowId))
   }
 
-  const addColumn = () => {
-    const col: Column = {
+  // 插入多列：position='left' 在最左侧、'right' 在最右侧；count 默认 1
+  const insertColumns = (count: number, position: 'left' | 'right') => {
+    const n = Math.max(1, Math.min(100, Math.floor(count) || 1))
+    const startIdx = columns.length + 1
+    const newCols: Column[] = Array.from({ length: n }, (_, i) => ({
       id: uid('col'),
-      name: `列${columns.length + 1}`,
+      name: `列${startIdx + i}`,
       type: 'text',
       options: [],
       width: DEFAULT_COL_WIDTH,
-    }
-    const nextCols = [...columns, col]
-    const nextRows = rows.map((r) => ({
-      ...r,
-      cells: { ...r.cells, [col.id]: emptyValueFor('text') },
     }))
+    const nextCols = position === 'left' ? [...newCols, ...columns] : [...columns, ...newCols]
+    const nextRows = rows.map((r) => {
+      const cells = { ...r.cells }
+      newCols.forEach((c) => { cells[c.id] = emptyValueFor('text') })
+      return { ...r, cells }
+    })
     commit(nextCols, nextRows)
   }
 
@@ -297,8 +308,92 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
             background: C.bg,
           }}
         >
-          <ToolBtn onClick={addRow} icon={<Plus size={14} />} label="行" />
-          <ToolBtn onClick={addColumn} icon={<Plus size={14} />} label="列" />
+          {/* 插入行/列（统一下拉，支持数量） */}
+          <div style={{ position: 'relative' }}>
+            <ToolBtn
+              onClick={() => { setInsertPop(!insertPop); setMultiOpen(null); setToolPop(null) }}
+              icon={<Plus size={14} />}
+              label="插入"
+              active={insertPop}
+            />
+            {insertPop && (
+              <Popover onClose={() => setInsertPop(false)}>
+                <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>插入数量</span>
+                  <button
+                    style={{ ...miniBtn, padding: '2px 6px' }}
+                    onClick={() => setInsertCount((v) => Math.max(1, v - 1))}
+                    disabled={insertCount <= 1}
+                  >−</button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={insertCount}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10)
+                      if (!isNaN(v)) setInsertCount(Math.max(1, Math.min(100, v)))
+                      else if (e.target.value === '') setInsertCount(1)
+                    }}
+                    style={{
+                      width: '52px',
+                      padding: '3px 6px',
+                      fontSize: '13px',
+                      textAlign: 'center',
+                      border: `1px solid ${C.border}`,
+                      borderRadius: '6px',
+                      fontFamily: 'inherit',
+                      color: C.text,
+                      background: C.surface,
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    style={{ ...miniBtn, padding: '2px 6px' }}
+                    onClick={() => setInsertCount((v) => Math.min(100, v + 1))}
+                    disabled={insertCount >= 100}
+                  >+</button>
+                </div>
+                <div style={{ height: '1px', background: C.border, margin: '6px 0' }} />
+                <button
+                  style={menuItemStyle}
+                  onClick={() => { insertRows(insertCount, 'top'); setInsertPop(false) }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                >
+                  <ArrowUp size={14} style={{ color: C.primary }} />
+                  <span>上方插行</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  onClick={() => { insertRows(insertCount, 'bottom'); setInsertPop(false) }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                >
+                  <ArrowDown size={14} style={{ color: C.primary }} />
+                  <span>下方插行</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  onClick={() => { insertColumns(insertCount, 'left'); setInsertPop(false) }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                >
+                  <ArrowLeft size={14} style={{ color: C.primary }} />
+                  <span>左侧插列</span>
+                </button>
+                <button
+                  style={menuItemStyle}
+                  onClick={() => { insertColumns(insertCount, 'right'); setInsertPop(false) }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                >
+                  <ArrowRight size={14} style={{ color: C.primary }} />
+                  <span>右侧插列</span>
+                </button>
+              </Popover>
+            )}
+          </div>
           <div style={{ width: '1px', height: '20px', background: C.border, margin: '0 2px' }} />
 
           {/* 排序 */}
@@ -991,7 +1086,8 @@ function CellEditor({
   const t = column.type
 
   // 文本单元格自动撑高（多行换行显示）
-  const textRef = useRef<HTMLTextAreaElement>(null)
+  // ref 同时复用于 url 输入框（单行），故用联合类型
+  const textRef = useRef<HTMLTextAreaElement | HTMLInputElement>(null)
   const autoSize = useCallback(() => {
     const el = textRef.current
     if (el) {
@@ -1000,24 +1096,26 @@ function CellEditor({
     }
   }, [])
 
-  // ── 文本/URL 本地状态 ──
-  // 避免每次 onChange 都触发 ProseMirror 事务（updateAttributes）→ NodeView 重渲染 →
-  // React 重设 textarea/input 的 value → 光标重置到开头 + autoSize 抖动导致多出换行。
-  // 改为：输入时只更新本地状态，onBlur 时才提交到 ProseMirror。
-  const [localValue, setLocalValue] = useState<string>(typeof value === 'string' ? value : '')
-  const [isFocused, setIsFocused] = useState(false)
-  // 非聚焦时从 prop 同步（撤销/重做、历史恢复、列宽变化等外部更新）
+  // ── 非受控（uncontrolled）文本/URL 输入 ──
+  // 关键：受控 textarea/input + 中文输入法(IME)合成会冲突——合成期间 React 重设 value 会打断
+  // 合成、导致光标跳到开头、autoSize 抖动多出换行。英文/复制因不经过 IME 合成故无此问题。
+  // 改用非受控：浏览器原生管理 IME 合成，input 的值完全由 DOM 控制，仅在以下时机干预：
+  //   ① 外部 value 变化（撤销/重做/历史恢复/列宽变化）且当前未聚焦时，手动 ref.value = value 同步
+  //   ② onBlur / compositionEnd 时读取 ref.current.value 提交到 ProseMirror（触发自动保存）
+  // 这样 IME 合成全程不被 React 打断，光标与换行均正常。
   useEffect(() => {
-    if (!isFocused && typeof value === 'string' && value !== localValue) {
-      setLocalValue(value)
+    const el = textRef.current
+    if (el && typeof value === 'string' && document.activeElement !== el && el.value !== value) {
+      el.value = value
+      autoSize()
     }
-  }, [value, isFocused]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [value, autoSize])
 
-  // 在绘制前重算：列宽变化（拖拽变窄/变宽）或本地内容变化都要重新撑高，
-  // 否则旧高度 + overflow:hidden 会把多行文本裁掉。
+  // 在绘制前重算：列宽变化（拖拽变窄/变宽）要重新撑高，
+  // 否则旧高度 + overflow:hidden 会把多行文本裁掉。内容变化由 onInput 自行处理。
   useLayoutEffect(() => {
     autoSize()
-  }, [localValue, column.width, autoSize])
+  }, [column.width, autoSize])
   // 监听 textarea 自身宽度变化：table-layout:fixed 下列宽在父 table layout 后才最终确定，
   // 重开笔记、列宽 settling 时宽度会变化，必须据此重算高度，否则多行文本仍被截断。
   // 只响应宽度变化，忽略高度变化避免循环。
@@ -1218,15 +1316,14 @@ function CellEditor({
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         <input
-          value={localValue}
-          onChange={(e) => setLocalValue(e.target.value)}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => { setIsFocused(false); onChange(localValue) }}
+          ref={textRef}
+          defaultValue={(value as string) || ''}
+          onBlur={(e) => onChange(e.currentTarget.value)}
           placeholder="https://"
           style={cellInputStyle}
         />
-        {localValue && (
-          <a href={localValue} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="打开链接" style={{ color: C.primary }}>
+        {(value as string) && (
+          <a href={value as string} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="打开链接" style={{ color: C.primary }}>
             ↗
           </a>
         )}
@@ -1235,15 +1332,14 @@ function CellEditor({
   }
 
   // text 默认：换行文本框（超出列宽自动折行，高度随内容增长）
-  // 使用本地状态，onBlur 时才提交到 ProseMirror，避免每次按键触发事务导致光标重置
+  // 非受控：浏览器原生管理 IME 合成，onInput 仅调 autoSize 撑高，onBlur/compositionEnd 提交最终内容
   return (
     <textarea
       ref={textRef}
-      value={localValue}
-      onChange={(e) => { setLocalValue(e.target.value); autoSize() }}
-      onFocus={() => setIsFocused(true)}
-      onBlur={() => { setIsFocused(false); onChange(localValue) }}
+      defaultValue={(value as string) || ''}
       onInput={autoSize}
+      onCompositionEnd={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
+      onBlur={(e) => onChange(e.currentTarget.value)}
       rows={1}
       style={{
         ...cellInputStyle,
@@ -1378,6 +1474,23 @@ const miniBtn: React.CSSProperties = {
   ...baseBtn,
   padding: '3px 6px',
   fontSize: '11px',
+}
+
+const menuItemStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  width: '100%',
+  padding: '6px 8px',
+  border: 'none',
+  background: 'transparent',
+  cursor: 'pointer',
+  fontSize: '13px',
+  color: C.text,
+  fontFamily: 'inherit',
+  textAlign: 'left',
+  borderRadius: '4px',
+  transition: 'background 0.12s',
 }
 
 const iconBtn: React.CSSProperties = {
