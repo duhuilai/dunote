@@ -1086,10 +1086,11 @@ function CellEditor({
   const t = column.type
 
   // 文本单元格自动撑高（多行换行显示）
-  // ref 同时复用于 url 输入框（单行），故用联合类型
-  const textRef = useRef<HTMLTextAreaElement | HTMLInputElement>(null)
+  // textarea 与 input 分别用独立 ref，避免联合类型赋给 JSX ref 时的类型不匹配
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const autoSize = useCallback(() => {
-    const el = textRef.current
+    const el = textareaRef.current ?? inputRef.current
     if (el) {
       el.style.height = 'auto'
       el.style.height = el.scrollHeight + 'px'
@@ -1104,7 +1105,7 @@ function CellEditor({
   //   ② onBlur / compositionEnd 时读取 ref.current.value 提交到 ProseMirror（触发自动保存）
   // 这样 IME 合成全程不被 React 打断，光标与换行均正常。
   useEffect(() => {
-    const el = textRef.current
+    const el = textareaRef.current ?? inputRef.current
     if (el && typeof value === 'string' && document.activeElement !== el && el.value !== value) {
       el.value = value
       autoSize()
@@ -1120,7 +1121,7 @@ function CellEditor({
   // 重开笔记、列宽 settling 时宽度会变化，必须据此重算高度，否则多行文本仍被截断。
   // 只响应宽度变化，忽略高度变化避免循环。
   useLayoutEffect(() => {
-    const el = textRef.current
+    const el = textareaRef.current ?? inputRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
     let lastWidth = 0
     const ro = new ResizeObserver((entries) => {
@@ -1316,7 +1317,7 @@ function CellEditor({
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         <input
-          ref={textRef}
+          ref={inputRef}
           defaultValue={(value as string) || ''}
           onBlur={(e) => onChange(e.currentTarget.value)}
           placeholder="https://"
@@ -1335,7 +1336,7 @@ function CellEditor({
   // 非受控：浏览器原生管理 IME 合成，onInput 仅调 autoSize 撑高，onBlur/compositionEnd 提交最终内容
   return (
     <textarea
-      ref={textRef}
+      ref={textareaRef}
       defaultValue={(value as string) || ''}
       onInput={autoSize}
       onCompositionEnd={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
