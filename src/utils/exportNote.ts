@@ -148,11 +148,13 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
   <title>${title}</title>
   <style>
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Microsoft YaHei', sans-serif;
+      /* 默认正文：宋体 小四(12pt)，行距 1.5 倍；跨平台回退到对应中文字体 */
+      font-family: 'SimSun', 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif;
+      font-size: 12pt;
       max-width: 800px;
       margin: 0 auto;
       padding: 40px 20px;
-      line-height: 1.6;
+      line-height: 1.5;
       color: #1E293B;
       background: #FFFFFF;
     }
@@ -161,9 +163,10 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
       margin-bottom: 0.5em;
       font-weight: 600;
     }
-    h1 { font-size: 2em; border-bottom: 1px solid #E2E8F0; padding-bottom: 0.3em; }
-    h2 { font-size: 1.5em; border-bottom: 1px solid #E2E8F0; padding-bottom: 0.3em; }
-    h3 { font-size: 1.25em; }
+    /* 一级标题：黑体 三号(16pt)；二三级标题：宋体 三号(16pt) */
+    h1 { font-family: 'SimHei', 'Heiti SC', 'PingFang SC', 'Microsoft YaHei', 'Source Han Sans SC', 'Noto Sans CJK SC', sans-serif; font-size: 16pt; font-weight: 700; border-bottom: 1px solid #E2E8F0; padding-bottom: 0.3em; }
+    h2 { font-family: 'SimSun', 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif; font-size: 16pt; border-bottom: 1px solid #E2E8F0; padding-bottom: 0.3em; }
+    h3 { font-family: 'SimSun', 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif; font-size: 16pt; }
     p { margin: 0.8em 0; }
     code {
       background: #F1F5F9;
