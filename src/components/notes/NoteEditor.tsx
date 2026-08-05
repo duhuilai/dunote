@@ -208,6 +208,10 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       handleKeyDown: (view, event) => {
         const ed = editorRef.current
         if (!ed) return false
+        // IME 合成期间：放行所有按键给输入法原生处理（尤其用 Enter 确认中文候选时），
+        // 否则编辑器会把确认键误当作换行/光标移动，出现「多出换行 + 光标跳到开头」。
+        // 普通表格单元格是 contentEditable(TD)，不在下方 INPUT/TEXTAREA 放行列表内，必须在此统一拦截。
+        if (event.isComposing || event.keyCode === 229) return false
         // 智能表格等节点内的输入框/下拉，Tab 等按键应交由原生控件处理，不要被编辑器拦截
         const tgt = event.target as HTMLElement | null
         if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT')) {

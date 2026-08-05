@@ -467,9 +467,9 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                       <option value="empty">为空</option>
                     </select>
                     {f.mode !== 'empty' && (
-                      <input
+                      <ImeTextField
                         value={f.value}
-                        onChange={(e) => updateFilter(i, { ...f, value: e.target.value })}
+                        onChange={(v) => updateFilter(i, { ...f, value: v })}
                         placeholder="值"
                         style={{ ...inputStyle, width: '90px' }}
                       />
@@ -538,9 +538,9 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', height: '38px', padding: '0 8px', gap: '4px', overflow: 'hidden' }}>
-                      <input
+                      <ImeTextField
                         value={c.name}
-                        onChange={(e) => renameColumn(c.id, e.target.value)}
+                        onChange={(v) => renameColumn(c.id, v)}
                         style={{
                           ...inputStyle,
                           fontWeight: 600,
@@ -800,6 +800,44 @@ function ColMenuContent({
   )
 }
 
+/* ─── 选项标签输入（IME 安全） ───
+ * 用本地草稿 + 合成守卫，避免父级 updateAttributes 在合成期间反复重渲染导致光标跳动。
+ */
+function OptLabelInput({
+  value,
+  onCommit,
+  style,
+}: {
+  value: string
+  onCommit: (v: string) => void
+  style?: React.CSSProperties
+}) {
+  const [draft, setDraft] = useState(value)
+  const composing = useRef(false)
+  useEffect(() => {
+    if (!composing.current) setDraft(value)
+  }, [value])
+  return (
+    <input
+      value={draft}
+      onChange={(e) => {
+        const v = e.target.value
+        setDraft(v)
+        if (!composing.current) onCommit(v)
+      }}
+      onCompositionStart={() => { composing.current = true }}
+      onCompositionEnd={(e) => {
+        composing.current = false
+        const v = e.currentTarget.value
+        setDraft(v)
+        onCommit(v)
+      }}
+      onBlur={(e) => { if (composing.current) return; onCommit(e.currentTarget.value) }}
+      style={style}
+    />
+  )
+}
+
 /* ─── 选项编辑器 ─── */
 function OptionEditor({
   col,
@@ -824,9 +862,9 @@ function OptionEditor({
               onChange={(e) => commit(opts.map((x, idx) => (idx === i ? { ...x, color: e.target.value } : x)))}
               style={{ width: '22px', height: '22px', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
             />
-            <input
+            <OptLabelInput
               value={o.label}
-              onChange={(e) => commit(opts.map((x, idx) => (idx === i ? { ...x, label: e.target.value } : x)))}
+              onCommit={(v) => commit(opts.map((x, idx) => (idx === i ? { ...x, label: v } : x)))}
               style={{ ...inputStyle, flex: 1, border: `1px solid ${C.border}`, borderRadius: '6px', padding: '4px 6px' }}
             />
             <button style={miniBtn} onClick={() => commit(opts.filter((_, idx) => idx !== i))}>
@@ -1069,6 +1107,112 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
   )
 }
 
+/* ─── IME 安全文本输入 ───
+ * 解决中文输入法（IME）合成期间受控组件被 React 重设 value 导致的「光标跳到开头 / 多出换行」。
+ * 原理：合成中只更新本地 internal（不提交父组件），避免重渲染打断 IME；
+ *       合成结束(onCompositionEnd)或失焦(onBlur)时才把最终文本提交给 onChange。
+ * 英文/粘贴不经过合成，onChange 实时提交（composing=false）。
+ * 多行(multiline)时内置 autoSize，随内容/列宽变化撑高，避免多行文本被裁切。
+ */
+function ImeTextField({
+  value,
+  onChange,
+  multiline,
+  resizeSignal,
+  className,
+  style,
+  placeholder,
+  rows = 1,
+  onKeyDown,
+  title,
+}: {
+  value?: string
+  onChange: (v: string) => void
+  multiline?: boolean
+  resizeSignal?: unknown
+  className?: string
+  style?: React.CSSProperties
+  placeholder?: string
+  rows?: number
+  onKeyDown?: React.KeyboardEventHandler<HTMLTextAreaElement | HTMLInputElement>
+  title?: string
+}) {
+  const [internal, setInternal] = useState(value ?? '')
+  const composing = useRef(false)
+  const ref = useRef<HTMLTextAreaElement | HTMLInputElement>(null)
+
+  const autoSize = useCallback(() => {
+    const el = ref.current
+    if (el && multiline) {
+      el.style.height = 'auto'
+      el.style.height = el.scrollHeight + 'px'
+    }
+  }, [multiline])
+
+  // 外部值变化（撤销/重做/历史恢复/列宽变化）且当前未合成时同步
+  useEffect(() => {
+    if (!composing.current) setInternal(value ?? '')
+  }, [value])
+
+  // 内容或列宽变化后撑高
+  useEffect(() => {
+    autoSize()
+  }, [internal, resizeSignal, autoSize])
+
+  // 监听元素自身宽度变化（table-layout:fixed 下宽度 settled 较晚），据此重算高度
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || !multiline || typeof ResizeObserver === 'undefined') return
+    let lastW = 0
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect
+      if (cr == null) return
+      if (cr.width !== lastW) {
+        lastW = cr.width
+        autoSize()
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [autoSize, multiline])
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+    const v = e.currentTarget.value
+    setInternal(v)
+    if (!composing.current) onChange(v) // 非合成（英文/粘贴）实时提交
+  }
+  const handleCompositionStart = () => {
+    composing.current = true
+  }
+  const handleCompositionEnd = (e: React.CompositionEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+    composing.current = false
+    const v = e.currentTarget.value
+    setInternal(v)
+    onChange(v) // 合成结束提交最终中文
+  }
+  const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+    if (composing.current) return // 合成中失焦不提交（避免截断未完成的拼音）
+    onChange(e.currentTarget.value)
+  }
+
+  const common: Record<string, unknown> = {
+    ref,
+    value: internal,
+    onChange: handleChange,
+    onCompositionStart: handleCompositionStart,
+    onCompositionEnd: handleCompositionEnd,
+    onBlur: handleBlur,
+    className,
+    style,
+    placeholder,
+    title,
+    onKeyDown,
+  }
+  return multiline
+    ? <textarea {...common} rows={rows} />
+    : <input {...common} />
+}
+
 /* ─── 单元格编辑器 ─── */
 function CellEditor({
   column,
@@ -1084,57 +1228,6 @@ function CellEditor({
   onToggleMulti: () => void
 }) {
   const t = column.type
-
-  // 文本单元格自动撑高（多行换行显示）
-  // textarea 与 input 分别用独立 ref，避免联合类型赋给 JSX ref 时的类型不匹配
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const autoSize = useCallback(() => {
-    const el = textareaRef.current ?? inputRef.current
-    if (el) {
-      el.style.height = 'auto'
-      el.style.height = el.scrollHeight + 'px'
-    }
-  }, [])
-
-  // ── 非受控（uncontrolled）文本/URL 输入 ──
-  // 关键：受控 textarea/input + 中文输入法(IME)合成会冲突——合成期间 React 重设 value 会打断
-  // 合成、导致光标跳到开头、autoSize 抖动多出换行。英文/复制因不经过 IME 合成故无此问题。
-  // 改用非受控：浏览器原生管理 IME 合成，input 的值完全由 DOM 控制，仅在以下时机干预：
-  //   ① 外部 value 变化（撤销/重做/历史恢复/列宽变化）且当前未聚焦时，手动 ref.value = value 同步
-  //   ② onBlur / compositionEnd 时读取 ref.current.value 提交到 ProseMirror（触发自动保存）
-  // 这样 IME 合成全程不被 React 打断，光标与换行均正常。
-  useEffect(() => {
-    const el = textareaRef.current ?? inputRef.current
-    if (el && typeof value === 'string' && document.activeElement !== el && el.value !== value) {
-      el.value = value
-      autoSize()
-    }
-  }, [value, autoSize])
-
-  // 在绘制前重算：列宽变化（拖拽变窄/变宽）要重新撑高，
-  // 否则旧高度 + overflow:hidden 会把多行文本裁掉。内容变化由 onInput 自行处理。
-  useLayoutEffect(() => {
-    autoSize()
-  }, [column.width, autoSize])
-  // 监听 textarea 自身宽度变化：table-layout:fixed 下列宽在父 table layout 后才最终确定，
-  // 重开笔记、列宽 settling 时宽度会变化，必须据此重算高度，否则多行文本仍被截断。
-  // 只响应宽度变化，忽略高度变化避免循环。
-  useLayoutEffect(() => {
-    const el = textareaRef.current ?? inputRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    let lastWidth = 0
-    const ro = new ResizeObserver((entries) => {
-      const cr = entries[0]?.contentRect
-      if (!cr) return
-      if (cr.width !== lastWidth) {
-        lastWidth = cr.width
-        autoSize()
-      }
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [autoSize])
 
   if (t === 'checkbox') {
     return (
@@ -1316,10 +1409,9 @@ function CellEditor({
   if (t === 'url') {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-        <input
-          ref={inputRef}
-          defaultValue={(value as string) || ''}
-          onBlur={(e) => onChange(e.currentTarget.value)}
+        <ImeTextField
+          value={(value as string) || ''}
+          onChange={(v) => onChange(v)}
           placeholder="https://"
           style={cellInputStyle}
         />
@@ -1333,14 +1425,13 @@ function CellEditor({
   }
 
   // text 默认：换行文本框（超出列宽自动折行，高度随内容增长）
-  // 非受控：浏览器原生管理 IME 合成，onInput 仅调 autoSize 撑高，onBlur/compositionEnd 提交最终内容
+  // 用 ImeTextField（受控 + 合成守卫）彻底规避中文 IME 合成期间光标跳开头/多出换行
   return (
-    <textarea
-      ref={textareaRef}
-      defaultValue={(value as string) || ''}
-      onInput={autoSize}
-      onCompositionEnd={(e) => onChange((e.currentTarget as HTMLTextAreaElement).value)}
-      onBlur={(e) => onChange(e.currentTarget.value)}
+    <ImeTextField
+      multiline
+      resizeSignal={column.width}
+      value={(value as string) || ''}
+      onChange={(v) => onChange(v)}
       rows={1}
       style={{
         ...cellInputStyle,
