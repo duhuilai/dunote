@@ -1,11 +1,5 @@
-# v0.2.18
+# v0.2.19
 
 ## 修复
-- 彻底修复普通（TipTap 原生）表格中文输入法光标跳到下一格 / 多出换行：v0.2.17 仅拦截「合成中」与「keyCode 229」两类按键，仍漏掉 IME 在 `compositionend` 之后补发的 `isComposing=false` 且 `keyCode≠229` 确认键。`NoteEditor` 新增 `handleDOMEvents` 追踪合成态 + 150ms 宽限期（`composingRef`），`handleKeyDown` 在宽限期内拦截会移动光标的 `Tab`/`Enter`，彻底阻止 `goToNextCell`/`splitBlock`。
-
-## 新增
-- 任务管理：多字段组合排序。支持按 姓名 / 结束日期 / 开始日期 / 任务名称 排序，可叠加多条规则，用上移/下移调整优先级顺序；空值恒排末尾，姓名/任务名走中文拼音序。
-- 人员管理：默认显示在岗人员，可切换「离职」「全部」；显示全部时离职人员排在岗人员下方。
-
-## 优化
-- 任务管理卡片紧凑化：缩小内边距、间距与字号，一屏可显示更多任务。
+- 普通（TipTap 原生）表格中文输入法 macOS 跳格：v0.2.18 的 IME 宽限期只拦截 `Tab`/`Enter`，漏掉 macOS 用「空格」确认候选的确认键（`isComposing=false` 且 `keyCode=32`），导致空格进入 ProseMirror 干扰 IME 提交、光标跳格。`NoteEditor` 的宽限期拦截名单补上 ` `（空格），返回 true 仅阻止 ProseMirror keymap，IME 仍正常收键。
+- 笔记导出 PDF 表格右侧被截：TipTap 可调列宽表格在 `<col>` 上写 `style="width: NNNpx"`，浏览器按 `<col>` 宽度之和分配列宽，列宽之和超出 794px 容器宽 → html2canvas 画布比 A4 页宽 → 右侧被切。`exportNote.ts` 新增 `normalizeTablesForExport` 剥掉 `table/colgroup/col` 的显式宽度；导出样式升级为 `table { table-layout:fixed; width:100% !important }` + 单元格 `word-break:break-word; overflow-wrap:anywhere`，表格等宽分配、长内容自动换行，全部列完整可见。HTML 导出共用同一逻辑，一并受益。

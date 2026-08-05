@@ -208,9 +208,10 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       attributes: {
         class: 'tiptap',
       },
-      // 追踪 IME 合成状态：合成开始置 true；合成结束后保持 150ms「宽限期」再置 false。
+      // 追踪 IME 合成状态：合成开始置 true；合成结束后保持 200ms「宽限期」再置 false。
       // 用途：handleKeyDown 据此拦截合成刚结束、IME 补发的确认键（isComposing=false 且 keyCode≠229），
-      // 否则这些键会落到 ProseMirror 的 keymap，触发表格 goToNextCell(跳格)/splitBlock(换行)。
+      // 否则这些键会落到 ProseMirror 的 keymap，触发表格 goToNextCell(跳格)/splitBlock(换行)；
+      // 或（macOS）被空格确认键干扰 IME 提交，导致光标错位/跳格。
       handleDOMEvents: {
         compositionstart: () => {
           composingRef.current = true
@@ -222,7 +223,7 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
           if (composingTimerRef.current) clearTimeout(composingTimerRef.current)
           composingTimerRef.current = window.setTimeout(() => {
             composingRef.current = false
-          }, 150)
+          }, 200)
           return false
         },
       },
@@ -233,13 +234,31 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
         // 返回 false 会让 ProseMirror 的 Tab→goToNextCell / Enter→splitBlock 等被触发，
         // 把 IME 的确认键误当作单元格跳转/换行，导致「光标跳到下一个单元格开头」。
         // 返回 true 只阻止 ProseMirror 自身的 keymap；浏览器/OS 层的 IME 仍正常接收按键（互不干涉）。
-        // isComposing 覆盖合成中；keyCode===229 覆盖合成刚结束 IME 补发的"确认键"。
-        // 这两个分支对所有按键返回 true，彻底阻止 ProseMirror keymap（避免跳格/换行）。
-        if (event.isComposing || event.keyCode === 229) return true
-        // 合成刚结束的「宽限期」：composingRef 仍为 true（compositionend 后 150ms 内）。
-        // 此时 IME 可能补发一个 isComposing=false、keyCode≠229 的确认键；只拦截会移动光标的
-        // Tab/Enter（跳格/换行），其余按键正常放行，避免误吞用户紧跟 IME 之后的快速输入。
-        if (composingRef.current && (event.key === 'Tab' || event.key === 'Enter')) return true
+        // ── IME 合成态识别 ──
+        // 合成中：isComposing / keyCode===229 / key==='Process' 任一命中即视为合成中。
+        // 关键改进：在“合成中的每一次按键”上都把 composingRef 置 true 并续期宽限期，
+        // 这样即使某些 IME/浏览器不触发 compositionstart DOM 事件，也能靠按键本身识别合成态，
+        // 避免确认键在 isComposing=false、keyCode≠229 时漏过守卫、误触发 goToNextCell/splitBlock。
+        const imeKey = event.isComposing || event.keyCode === 229 || event.key === 'Process'
+        if (imeKey) {
+          composingRef.current = true
+          if (composingTimerRef.current) clearTimeout(composingTimerRef.current)
+          composingTimerRef.current = window.setTimeout(() => { composingRef.current = false }, 200)
+          // 合成中拦截“所有键”，彻底阻止 ProseMirror keymap（goToNextCell / splitBlock 等）
+          return true
+        }
+        // 合成刚结束的「宽限期」（composingRef 仍为 true，最近一次合成按键后 200ms 内）：
+        // 拦截会移动光标/换行的 Tab / Enter / Shift-Tab，以及 **空格**——macOS 中文输入法
+        // 用「空格」确认候选，确认键 keydown 上 isComposing===false 且 keyCode===32（非229），
+        // 会落到此处宽限期分支；若不拦截，空格会进入 ProseMirror，与 IME 提交互相干扰，
+        // 导致光标错位/跳格。返回 true 仅阻止 ProseMirror 的 keymap，IME 仍正常接收按键，互不干涉。
+        // 其余按键正常放行，避免误吞用户紧跟 IME 之后的正常输入。
+        if (
+          composingRef.current &&
+          (event.key === 'Tab' || event.key === 'Enter' || event.key === ' ' || event.code === 'Space')
+        ) {
+          return true
+        }
         // 智能表格等节点内的输入框/下拉，Tab 等按键应交由原生控件处理，不要被编辑器拦截
         const tgt = event.target as HTMLElement | null
         if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT')) {

@@ -75,6 +75,32 @@ function preprocessTables(html: string): string {
 }
 
 /**
+ * 导出前规范化表格：剥离 table / colgroup / col 上的 width 属性与 style.width。
+ * TipTap 的可调整列宽表格会把每列的像素宽度写到 <col style="width: NNNpx">，
+ * 即便外层 CSS 写了 table { width: 100% }，浏览器仍按 <col> 宽度之和分配，
+ * 导致表格总宽超过页面宽（PDF 右侧被截、HTML 横向溢出）。
+ * 这里统一剥掉，让列宽完全由外层 CSS 控制（等宽 + 文本自动换行）。
+ */
+function normalizeTablesForExport(html: string): string {
+  if (!/<table[\s>]/i.test(html)) return html
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  doc.querySelectorAll('table, colgroup, col').forEach((el) => {
+    el.removeAttribute('width')
+    const style = el.getAttribute('style')
+    if (style) {
+      // 去掉 width: ...;，保留其它内联样式（背景色、对齐等）
+      const cleaned = style.replace(/(?:^|[\s;])width\s*:\s*[^;]+;?/gi, '')
+      if (cleaned.trim()) {
+        el.setAttribute('style', cleaned.trim())
+      } else {
+        el.removeAttribute('style')
+      }
+    }
+  })
+  return doc.body.innerHTML
+}
+
+/**
  * Convert HTML content to Markdown string
  */
 function htmlToMarkdown(title: string, htmlContent: string): string {
@@ -164,17 +190,31 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
     }
     table {
       border-collapse: collapse;
-      width: 100%;
+      width: 100% !important;
+      max-width: 100% !important;
+      /* 列宽不再由 <col> 决定（normalizeTablesForExport 已剥），按等宽分配 + 内容自动换行 */
+      table-layout: fixed !important;
       margin: 1em 0;
+    }
+    table col,
+    table colgroup col {
+      width: auto !important;
     }
     th, td {
       border: 1px solid #E2E8F0;
       padding: 8px 12px;
       text-align: left;
+      /* 长中文/英文/URL 强制在任意字符处换行，避免把单元格撑宽 */
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      white-space: normal;
+      min-width: 0;
     }
     th {
       background: #F1F5F9;
       font-weight: 600;
+      /* 表头保持单行（窄列下更易读），内容单元格允许换行 */
+      white-space: nowrap;
     }
     ul, ol {
       padding-left: 2em;
@@ -210,7 +250,8 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
  * 再通过 Tauri 保存对话框落盘，跨平台稳定可用。
  */
 async function buildPdfBytes(title: string, htmlContent: string): Promise<Uint8Array> {
-  const fullHtml = buildHtmlDocument(title, htmlContent)
+  // 导出前剥掉 TipTap 表格 <col> 上的显式宽度，避免列宽之和超出页面宽导致 PDF 右侧被截。
+  const fullHtml = buildHtmlDocument(title, normalizeTablesForExport(htmlContent))
   // 离屏渲染容器：用 0 尺寸的裁切外层把内容挡在用户视线外，但被截元素本身位于视口坐标 (0,0)，
   // 这样 html2canvas 能在“屏幕坐标”正确读取布局（之前放到 left:-10000px 会被截成空白页）。
   const wrapper = document.createElement('div')
