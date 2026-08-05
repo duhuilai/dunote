@@ -828,19 +828,25 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
   const [showFontSizeMenu, setShowFontSizeMenu] = useState(false)
   const fontSizeRef = useRef<HTMLDivElement>(null)
 
+  // 字号：中文字号标准（GB/T 9851）—— 从初号到八号，pt 单位。
+  // 两个下拉（主工具栏 1182、备工具栏 2149）共用同一数组。
   const fontSizes = [
-    { label: '小八', value: '8pt' },
-    { label: '小九', value: '9pt' },
-    { label: '十号', value: '10pt' },
-    { label: '十一', value: '11pt' },
-    { label: '十二', value: '12pt' },
-    { label: '十四', value: '14pt' },
-    { label: '十六', value: '16pt' },
-    { label: '十八', value: '18pt' },
-    { label: '二十', value: '20pt' },
-    { label: '二十四', value: '24pt' },
-    { label: '三十六', value: '36pt' },
-    { label: '四十八', value: '48pt' },
+    { label: '初号', value: '42pt' },
+    { label: '小初', value: '36pt' },
+    { label: '一号', value: '26pt' },
+    { label: '小一', value: '24pt' },
+    { label: '二号', value: '22pt' },
+    { label: '小二', value: '18pt' },
+    { label: '三号', value: '16pt' },
+    { label: '小三', value: '15pt' },
+    { label: '四号', value: '14pt' },
+    { label: '小四', value: '12pt' },
+    { label: '五号', value: '10.5pt' },
+    { label: '小五', value: '9pt' },
+    { label: '六号', value: '7.5pt' },
+    { label: '小六', value: '6.5pt' },
+    { label: '七号', value: '5.5pt' },
+    { label: '八号', value: '5pt' },
   ]
 
   const handleFontSizeChange = (size: string) => {
