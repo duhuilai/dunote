@@ -65,7 +65,9 @@ jobs:
       # ─────────────────────────────────────────────────────────────
       # macOS 代码签名（可选）
       #
-      # 未配置 APPLE_CERTIFICATE secret 时本步骤自动跳过，构建行为与之前一致。
+      # 未配置 APPLE_CERTIFICATE secret 时本步骤自动跳过；即便已配置但证书
+      # 缺失 / 格式不正确，本步骤也以 continue-on-error 运行，构建自动回退到
+      # ad-hoc 签名，不会再卡死 CI（ad-hoc 签名即「缓解方案」默认行为）。
       #
       # 为什么需要它：macOS 的 TCC（隐私授权）把「文件夹访问权限」绑定到
       # App 的代码签名身份 + Bundle ID + 安装路径。未签名 / ad-hoc 签名的包
@@ -75,13 +77,14 @@ jobs:
       # ─────────────────────────────────────────────────────────────
       - name: Import macOS signing certificate
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+        continue-on-error: true   # 证书缺失/无效时回退 ad-hoc，不阻断构建
         run: |
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
-          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security import certificate.p12 -f pkcs12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           CERT_ID=$(security find-identity -v -p codesigning build.keychain | head -n 1 | awk -F'"' '{print $2}')
           if [ -z "$CERT_ID" ]; then
