@@ -208,10 +208,12 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       handleKeyDown: (view, event) => {
         const ed = editorRef.current
         if (!ed) return false
-        // IME 合成期间：放行所有按键给输入法原生处理（尤其用 Enter 确认中文候选时），
-        // 否则编辑器会把确认键误当作换行/光标移动，出现「多出换行 + 光标跳到开头」。
-        // 普通表格单元格是 contentEditable(TD)，不在下方 INPUT/TEXTAREA 放行列表内，必须在此统一拦截。
-        if (event.isComposing || event.keyCode === 229) return false
+        // IME 合成期间：**必须返回 true** 阻止 ProseMirror 继续跑 keymap——
+        // 返回 false 会让 ProseMirror 的 Tab→goToNextCell / Enter→splitBlock 等被触发，
+        // 把 IME 的确认键误当作单元格跳转/换行，导致「光标跳到下一个单元格开头」。
+        // 返回 true 只阻止 ProseMirror 自身的 keymap；浏览器/OS 层的 IME 仍正常接收按键（互不干涉）。
+        // isComposing 覆盖合成中；keyCode===229 覆盖合成刚结束 IME 补发的"确认键"。
+        if (event.isComposing || event.keyCode === 229) return true
         // 智能表格等节点内的输入框/下拉，Tab 等按键应交由原生控件处理，不要被编辑器拦截
         const tgt = event.target as HTMLElement | null
         if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT')) {

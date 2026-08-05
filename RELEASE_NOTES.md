@@ -1,5 +1,4 @@
-# v0.2.16
+# v0.2.17
 
 ## 修复
-- 修复智能表格（自定义 DataTableView）中文输入法输入时光标跳到开头、多出换行：单元格文本 / URL / 列名 / 筛选值 / 选项标签改用 IME 安全输入组件（合成期间只更新本地、不触发重渲染，合成结束或失焦才提交）。
-- 修复普通（TipTap 原生）表格单元格中文输入法同样出现「光标跳开头 + 多出换行」：`NoteEditor` 的 `handleKeyDown` 在 IME 合成期间（`isComposing` 或 `keyCode === 229`）对所有按键一律放行，交给输入法原生处理，避免确认候选的 Enter 被误当作换行 / 光标移动。
+- 修复普通（TipTap 原生）表格中文输入法光标跳到下一格开头：v0.2.16 的 IME 守卫返回 `false` 会令 ProseMirror 继续跑 keymap，把 IME 确认键误触发为 `Tab→goToNextCell` / `Enter→splitBlock`；改为返回 `true`，明确阻止 ProseMirror 处理合成期间的按键，IME 仍走浏览器/OS 层正常工作（不影响中文输入）。
