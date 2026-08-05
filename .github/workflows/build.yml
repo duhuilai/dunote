@@ -21,12 +21,6 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
 
-    # 提到 job 级别，方便下面的 step 用 `env.XXX != ''` 判断是否配置了签名证书
-    env:
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-
     steps:
       - uses: actions/checkout@v4
       
@@ -62,60 +56,8 @@ jobs:
         shell: bash
         run: rm -rf src-tauri/target/release/bundle
 
-      # ─────────────────────────────────────────────────────────────
-      # macOS 代码签名（可选）
-      #
-      # 未配置 APPLE_CERTIFICATE secret 时本步骤自动跳过；即便已配置但证书
-      # 缺失 / 格式不正确，本步骤也以 continue-on-error 运行，构建自动回退到
-      # ad-hoc 签名，不会再卡死 CI（ad-hoc 签名即「缓解方案」默认行为）。
-      #
-      # 为什么需要它：macOS 的 TCC（隐私授权）把「文件夹访问权限」绑定到
-      # App 的代码签名身份 + Bundle ID + 安装路径。未签名 / ad-hoc 签名的包
-      # 每次构建的 cdhash 都不同，系统会认为是一个全新 App，于是每次升级后
-      # 都要重新授权访问笔记文件夹。用一张固定的签名证书（Developer ID
-      # 或自签名证书均可）签名后，签名身份跨版本稳定，授权才能保留。
-      # ─────────────────────────────────────────────────────────────
-      - name: Import macOS signing certificate
-        id: import-cert
-        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
-        continue-on-error: true   # 证书缺失/无效时回退 ad-hoc，不阻断构建
-        run: |
-          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          security import certificate.p12 -f pkcs12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          CERT_ID=$(security find-identity -v -p codesigning build.keychain | head -n 1 | awk -F'"' '{print $2}')
-          if [ -z "$CERT_ID" ]; then
-            echo "::error::No codesigning identity found in the imported keychain; will fall back to ad-hoc signing"
-            exit 1
-          fi
-          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
-          echo "MAC_SIGN_OK=true" >> "$GITHUB_ENV"
-          echo "Imported signing identity: $CERT_ID"
-          rm -f certificate.p12
-
       - name: Build Tauri app
         run: npm run tauri build
-        env:
-          # 仅当证书成功导入（MAC_SIGN_OK=true）时才传签名变量；否则一律留空
-          # → Tauri 走纯 ad-hoc 签名，绝不会调用 security import，构建不被坏证书拖垮
-          APPLE_SIGNING_IDENTITY: ${{ env.MAC_SIGN_OK == 'true' && env.APPLE_SIGNING_IDENTITY || '' }}
-          APPLE_ID: ${{ env.MAC_SIGN_OK == 'true' && secrets.APPLE_ID || '' }}
-          APPLE_PASSWORD: ${{ env.MAC_SIGN_OK == 'true' && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ env.MAC_SIGN_OK == 'true' && secrets.APPLE_TEAM_ID || '' }}
-
-      - name: Verify macOS signature
-        if: runner.os == 'macOS'
-        continue-on-error: true
-        run: |
-          APP_PATH=$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -n 1)
-          if [ -n "$APP_PATH" ]; then
-            echo "Signature info for $APP_PATH:"
-            codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E 'Identifier|Authority|Signature|TeamIdentifier' || true
-          fi
       
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
