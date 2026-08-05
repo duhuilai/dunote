@@ -164,6 +164,9 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
   // 让 useEditor 配置闭包里也能拿到最新的 onLocalPersist（避免闭包捕获初始值）
   const onLocalPersistRef = useRef(onLocalPersist)
   onLocalPersistRef.current = onLocalPersist
+  // IME 合成状态：handleDOMEvents 追踪，handleKeyDown 据此放行所有按键
+  const composingRef = useRef<boolean>(false)
+  const composingTimerRef = useRef<number | null>(null)
 
   // ─── 检索（Ctrl+F / Cmd+F） ───
   const [searchOpen, setSearchOpen] = useState(false)
@@ -205,6 +208,24 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       attributes: {
         class: 'tiptap',
       },
+      // 追踪 IME 合成状态：合成开始置 true；合成结束后保持 150ms「宽限期」再置 false。
+      // 用途：handleKeyDown 据此拦截合成刚结束、IME 补发的确认键（isComposing=false 且 keyCode≠229），
+      // 否则这些键会落到 ProseMirror 的 keymap，触发表格 goToNextCell(跳格)/splitBlock(换行)。
+      handleDOMEvents: {
+        compositionstart: () => {
+          composingRef.current = true
+          if (composingTimerRef.current) clearTimeout(composingTimerRef.current)
+          return false
+        },
+        compositionend: () => {
+          composingRef.current = true
+          if (composingTimerRef.current) clearTimeout(composingTimerRef.current)
+          composingTimerRef.current = window.setTimeout(() => {
+            composingRef.current = false
+          }, 150)
+          return false
+        },
+      },
       handleKeyDown: (view, event) => {
         const ed = editorRef.current
         if (!ed) return false
@@ -213,7 +234,12 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
         // 把 IME 的确认键误当作单元格跳转/换行，导致「光标跳到下一个单元格开头」。
         // 返回 true 只阻止 ProseMirror 自身的 keymap；浏览器/OS 层的 IME 仍正常接收按键（互不干涉）。
         // isComposing 覆盖合成中；keyCode===229 覆盖合成刚结束 IME 补发的"确认键"。
+        // 这两个分支对所有按键返回 true，彻底阻止 ProseMirror keymap（避免跳格/换行）。
         if (event.isComposing || event.keyCode === 229) return true
+        // 合成刚结束的「宽限期」：composingRef 仍为 true（compositionend 后 150ms 内）。
+        // 此时 IME 可能补发一个 isComposing=false、keyCode≠229 的确认键；只拦截会移动光标的
+        // Tab/Enter（跳格/换行），其余按键正常放行，避免误吞用户紧跟 IME 之后的快速输入。
+        if (composingRef.current && (event.key === 'Tab' || event.key === 'Enter')) return true
         // 智能表格等节点内的输入框/下拉，Tab 等按键应交由原生控件处理，不要被编辑器拦截
         const tgt = event.target as HTMLElement | null
         if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT')) {

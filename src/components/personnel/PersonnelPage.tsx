@@ -36,10 +36,17 @@ export default function PersonnelPage() {
   const [showModal, setShowModal] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', position: '', hireDate: '', resignDate: '', monthlySalary: '', phone: '', status: 'active' as 'active' | 'resigned' })
+  const [filter, setFilter] = useState<'active' | 'resigned' | 'all'>('active')
 
   const activeCount = personnel.filter((p) => p.status === 'active').length
   const resignedCount = personnel.filter((p) => p.status === 'resigned').length
   const totalSalary = personnel.filter((p) => p.status === 'active').reduce((s, p) => s + p.monthlySalary, 0)
+
+  // 可见人员：默认「在岗」；「全部」时在岗在前、离职在后
+  const visiblePersonnel =
+    filter === 'all'
+      ? [...personnel.filter((p) => p.status === 'active'), ...personnel.filter((p) => p.status === 'resigned')]
+      : personnel.filter((p) => p.status === filter)
 
   const handleSave = () => {
     if (!form.name || !form.position) return
@@ -122,6 +129,42 @@ export default function PersonnelPage() {
           <StatCard icon={UserX} label="离职" value={resignedCount} color="danger" />
         </div>
 
+        {/* Filter */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          {([
+            { key: 'active', label: '在岗', count: activeCount },
+            { key: 'resigned', label: '离职', count: resignedCount },
+            { key: 'all', label: '全部', count: personnel.length },
+          ] as const).map((f) => {
+            const selected = filter === f.key
+            return (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 14px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  border: `1px solid ${selected ? colors.primary : colors.border}`,
+                  background: selected ? colors.primaryLight : colors.surface,
+                  color: selected ? colors.primary : colors.textSecondary,
+                }}
+              >
+                {f.label}
+                <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '9999px', background: selected ? colors.primary : colors.bg, color: selected ? '#fff' : colors.textMuted }}>
+                  {f.count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
         {/* Table */}
         <div style={{ background: colors.surface, borderRadius: '12px', border: `1px solid ${colors.border}`, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -138,7 +181,7 @@ export default function PersonnelPage() {
               </tr>
             </thead>
             <tbody>
-              {personnel.map((p) => (
+              {visiblePersonnel.map((p) => (
                 <tr key={p.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>

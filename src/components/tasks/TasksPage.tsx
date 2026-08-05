@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useAppStore } from '@/store'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { isOverdue } from '@/utils/taskUtils'
+import type { Task } from '@/types'
 import DateField from '@/components/ui/DateField'
-import { Clock, CheckCircle2, AlertCircle, User, Calendar, Users as UsersIcon, X, Star, Plus, Trash2 } from 'lucide-react'
+import { Clock, CheckCircle2, AlertCircle, User, Calendar, Users as UsersIcon, X, Star, Plus, Trash2, ArrowUpDown, ArrowUp, ArrowDown, ChevronUp, ChevronDown } from 'lucide-react'
 
 const colors = {
   primary: '#2563EB',
@@ -40,6 +42,47 @@ const statusConfig = {
   completed: { label: '已完成', icon: CheckCircle2, color: colors.success, bg: colors.successLight },
 }
 
+/* ─── 多字段组合排序 ─── */
+type TaskSortKey = 'name' | 'responsiblePerson' | 'startTime' | 'expectedEndTime'
+type SortRule = { key: TaskSortKey; dir: 'asc' | 'desc' }
+
+const SORT_FIELDS: { key: TaskSortKey; label: string }[] = [
+  { key: 'name', label: '任务名称' },
+  { key: 'responsiblePerson', label: '姓名' },
+  { key: 'startTime', label: '开始日期' },
+  { key: 'expectedEndTime', label: '结束日期' },
+]
+
+// 多字段组合排序：按 rules 顺序依次比较，首个非 0 结果决定次序；空值恒排末尾（不受升降序影响）
+function sortTasks(list: Task[], rules: SortRule[]): Task[] {
+  if (rules.length === 0) return list
+  const out = list.slice()
+  out.sort((a, b) => {
+    for (const rule of rules) {
+      const va = (a[rule.key] ?? '').toString()
+      const vb = (b[rule.key] ?? '').toString()
+      const ea = va === ''
+      const eb = vb === ''
+      if (ea || eb) {
+        if (ea && eb) continue
+        return ea ? 1 : -1
+      }
+      let base: number
+      if (rule.key === 'startTime' || rule.key === 'expectedEndTime') {
+        const da = Date.parse(va)
+        const db = Date.parse(vb)
+        base = !isNaN(da) && !isNaN(db) ? da - db : 0
+      } else {
+        base = va.localeCompare(vb, 'zh-Hans-CN')
+      }
+      const r = rule.dir === 'desc' ? -base : base
+      if (r !== 0) return r
+    }
+    return 0
+  })
+  return out
+}
+
 export default function TasksPage() {
   const { tasks, updateTask, addTask, deleteTask, showToast, personnel } = useAppStore()
   const confirm = useConfirm()
@@ -74,6 +117,40 @@ export default function TasksPage() {
     if (filter !== 'all' && t.status !== filter) return false
     if (personFilter && t.responsiblePerson !== personFilter && !t.participants.includes(personFilter)) return false
     return true
+  })
+
+  // 多字段组合排序：按 sortRules 的顺序作为优先级依次比较
+  const [sortRules, setSortRules] = useState<SortRule[]>([])
+  const [sortOpen, setSortOpen] = useState(false)
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const sortAnchorRef = useRef<HTMLButtonElement>(null)
+  const [sortPos, setSortPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+
+  const sortedTasks = useMemo(() => sortTasks(filteredTasks, sortRules), [filteredTasks, sortRules])
+
+  // 打开/关闭排序面板，并按触发按钮位置定位（fixed + portal，避免被父容器 overflow 裁剪）
+  const openSort = () => {
+    const el = sortAnchorRef.current
+    if (el) {
+      const r = el.getBoundingClientRect()
+      setSortPos({ top: r.bottom + 6, left: Math.min(r.left, window.innerWidth - 320) })
+    }
+    setSortOpen((v) => !v)
+  }
+
+  // 调整排序规则先后顺序
+  const moveRule = (idx: number, delta: number) => {
+    setSortRules((prev) => {
+      const next = prev.slice()
+      const target = idx + delta
+      if (target < 0 || target >= next.length) return prev
+      ;[next[idx], next[target]] = [next[target], next[idx]]
+      return next
+    })
+  }
+
+  const iconBtnStyle = (disabled: boolean): React.CSSProperties => ({
+    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', borderRadius: '6px', border: 'none', background: 'transparent', cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: disabled ? colors.textMuted : colors.textSecondary, opacity: disabled ? 0.4 : 1,
   })
 
   const tabs = [
@@ -249,6 +326,17 @@ export default function TasksPage() {
             })}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <button
+              ref={sortAnchorRef}
+              onClick={openSort}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', borderRadius: '8px', border: `1px solid ${sortRules.length ? colors.primary : colors.border}`, background: sortRules.length ? colors.primaryLight : colors.surface, color: sortRules.length ? colors.primary : colors.textSecondary, fontSize: '13px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              <ArrowUpDown size={14} />
+              排序
+              {sortRules.length > 0 && (
+                <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '9999px', background: colors.primary, color: '#fff' }}>{sortRules.length}</span>
+              )}
+            </button>
             <User size={14} style={{ color: colors.textMuted }} />
             <select
               value={personFilter}
@@ -264,10 +352,95 @@ export default function TasksPage() {
         </div>
       </div>
 
+      {/* 排序面板（portal 到 body，避免被 overflow 裁剪） */}
+      {sortOpen && createPortal(
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onMouseDown={() => { setSortOpen(false); setAddMenuOpen(false) }} />
+          <div style={{ position: 'fixed', top: sortPos.top, left: sortPos.left, zIndex: 41, width: '300px', background: colors.surface, borderRadius: '12px', border: `1px solid ${colors.border}`, boxShadow: '0 10px 30px rgba(0,0,0,0.12)', padding: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: colors.text }}>排序规则</span>
+              {sortRules.length > 0 && (
+                <button onClick={() => { setSortRules([]); setAddMenuOpen(false) }} style={{ fontSize: '12px', color: colors.textMuted, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+                  清空
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '260px', overflowY: 'auto' }}>
+              {sortRules.map((rule, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px', borderRadius: '8px', background: colors.bg }}>
+                  <span style={{ fontSize: '11px', color: colors.textMuted, width: '16px', textAlign: 'center', flexShrink: 0 }}>{idx + 1}</span>
+                  <select
+                    value={rule.key}
+                    onChange={(e) => {
+                      const key = e.target.value as TaskSortKey
+                      setSortRules((prev) => prev.map((r, i) => (i === idx ? { ...r, key } : r)))
+                    }}
+                    style={{ flex: 1, minWidth: 0, padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.border}`, fontSize: '12px', outline: 'none', fontFamily: 'inherit', color: colors.text, background: colors.surface, cursor: 'pointer' }}
+                  >
+                    {SORT_FIELDS.map((f) => (
+                      <option key={f.key} value={f.key} disabled={f.key !== rule.key && sortRules.some((r, i) => i !== idx && r.key === f.key)}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => setSortRules((prev) => prev.map((r, i) => (i === idx ? { ...r, dir: r.dir === 'asc' ? 'desc' : 'asc' } : r)))}
+                    title={rule.dir === 'asc' ? '升序' : '降序'}
+                    style={{ display: 'flex', alignItems: 'center', gap: '2px', padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.border}`, background: colors.surface, color: colors.textSecondary, cursor: 'pointer', fontSize: '11px', fontFamily: 'inherit', whiteSpace: 'nowrap', flexShrink: 0 }}
+                  >
+                    {rule.dir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+                    {rule.dir === 'asc' ? '升' : '降'}
+                  </button>
+                  <button onClick={() => moveRule(idx, -1)} disabled={idx === 0} title="上移（提高优先级）" style={iconBtnStyle(idx === 0)}><ChevronUp size={14} /></button>
+                  <button onClick={() => moveRule(idx, 1)} disabled={idx === sortRules.length - 1} title="下移（降低优先级）" style={iconBtnStyle(idx === sortRules.length - 1)}><ChevronDown size={14} /></button>
+                  <button onClick={() => setSortRules((prev) => prev.filter((_, i) => i !== idx))} title="删除" style={{ ...iconBtnStyle(false), color: colors.danger, flexShrink: 0 }}><X size={14} /></button>
+                </div>
+              ))}
+              {sortRules.length === 0 && (
+                <div style={{ fontSize: '12px', color: colors.textMuted, textAlign: 'center', padding: '12px 0' }}>暂无排序，点击下方添加</div>
+              )}
+            </div>
+            <div style={{ marginTop: '10px', borderTop: `1px solid ${colors.border}`, paddingTop: '10px' }}>
+              {addMenuOpen ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {SORT_FIELDS.filter((f) => !sortRules.some((r) => r.key === f.key)).map((f) => (
+                    <button
+                      key={f.key}
+                      onClick={() => { setSortRules((prev) => [...prev, { key: f.key, dir: 'asc' }]); setAddMenuOpen(false) }}
+                      style={{ textAlign: 'left', padding: '8px 10px', borderRadius: '6px', border: 'none', background: 'transparent', color: colors.text, fontSize: '12px', cursor: 'pointer', fontFamily: 'inherit' }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = colors.bg)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                  {SORT_FIELDS.every((f) => sortRules.some((r) => r.key === f.key)) && (
+                    <div style={{ fontSize: '12px', color: colors.textMuted, padding: '8px 10px' }}>已全部添加</div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  onClick={() => setAddMenuOpen(true)}
+                  disabled={sortRules.length >= SORT_FIELDS.length}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%', justifyContent: 'center', padding: '8px', borderRadius: '8px', border: `1px dashed ${colors.border}`, background: 'transparent', color: colors.primary, fontSize: '12px', fontWeight: 500, cursor: sortRules.length >= SORT_FIELDS.length ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
+                >
+                  <Plus size={14} />
+                  添加排序字段
+                </button>
+              )}
+            </div>
+            <div style={{ marginTop: '8px', fontSize: '11px', color: colors.textMuted, lineHeight: 1.5 }}>
+              规则按从上到下的顺序排列优先级；同名字段自动禁用；空值恒排末尾。
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
+
       {/* Task Cards */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
-        <div style={{ display: 'grid', gap: '16px' }}>
-          {filteredTasks.map((t) => {
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+        <div style={{ display: 'grid', gap: '10px' }}>
+          {sortedTasks.map((t) => {
             const cfg = statusConfig[t.status]
             const StatusIcon = cfg.icon
             const overdue = isOverdue(t)
@@ -276,12 +449,12 @@ export default function TasksPage() {
               <div
                 key={t.id}
                 onClick={() => setSelectedTask(t.id)}
-                style={{ background: colors.surface, borderRadius: '12px', border: `1px solid ${colors.border}`, padding: '20px', cursor: 'pointer' }}
+                style={{ background: colors.surface, borderRadius: '10px', border: `1px solid ${colors.border}`, padding: '12px 14px', cursor: 'pointer' }}
               >
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <StatusIcon size={18} style={{ color: cfg.color }} />
-                    <h3 style={{ fontSize: '15px', fontWeight: 600, color: colors.text, margin: 0 }}>{t.name}</h3>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <StatusIcon size={16} style={{ color: cfg.color }} />
+                    <h3 style={{ fontSize: '14px', fontWeight: 600, color: colors.text, margin: 0 }}>{t.name}</h3>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     {overdue && (
@@ -303,25 +476,25 @@ export default function TasksPage() {
                     </span>
                   </div>
                 </div>
-                <p style={{ fontSize: '13px', color: colors.textSecondary, marginBottom: '16px', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{t.content}</p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '12px', fontSize: '12px', color: colors.textMuted }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><User size={13} />{t.responsiblePerson}</span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Calendar size={13} />{t.startTime} ~ {t.expectedEndTime}</span>
+                <p style={{ fontSize: '12px', color: colors.textSecondary, marginBottom: '8px', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{t.content}</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px', fontSize: '11px', color: colors.textMuted }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><User size={12} />{t.responsiblePerson}</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Calendar size={12} />{t.startTime} ~ {t.expectedEndTime}</span>
                   {t.participants.length > 0 && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><UsersIcon size={13} />{t.participants.join(', ')}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><UsersIcon size={12} />{t.participants.join(', ')}</span>
                   )}
                 </div>
                 {/* Progress */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ flex: 1, height: '8px', background: colors.bg, borderRadius: '9999px', overflow: 'hidden' }}>
+                  <div style={{ flex: 1, height: '6px', background: colors.bg, borderRadius: '9999px', overflow: 'hidden' }}>
                     <div style={{ height: '100%', borderRadius: '9999px', background: progressColor, width: `${t.progress}%` }} />
                   </div>
-                  <span style={{ fontSize: '12px', fontWeight: 500, color: colors.textSecondary }}>{t.progress}%</span>
+                  <span style={{ fontSize: '11px', fontWeight: 500, color: colors.textSecondary }}>{t.progress}%</span>
                 </div>
               </div>
             )
           })}
-          {filteredTasks.length === 0 && (
+          {sortedTasks.length === 0 && (
             <div style={{ padding: '48px 0', textAlign: 'center', color: colors.textMuted, fontSize: '13px' }}>
               没有符合条件的任务
             </div>
