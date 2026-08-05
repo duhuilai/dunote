@@ -76,6 +76,7 @@ jobs:
       # 或自签名证书均可）签名后，签名身份跨版本稳定，授权才能保留。
       # ─────────────────────────────────────────────────────────────
       - name: Import macOS signing certificate
+        id: import-cert
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
         continue-on-error: true   # 证书缺失/无效时回退 ad-hoc，不阻断构建
         run: |
@@ -88,21 +89,23 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           CERT_ID=$(security find-identity -v -p codesigning build.keychain | head -n 1 | awk -F'"' '{print $2}')
           if [ -z "$CERT_ID" ]; then
-            echo "::error::No codesigning identity found in the imported keychain"
+            echo "::error::No codesigning identity found in the imported keychain; will fall back to ad-hoc signing"
             exit 1
           fi
-          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
+          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+          echo "MAC_SIGN_OK=true" >> "$GITHUB_ENV"
           echo "Imported signing identity: $CERT_ID"
           rm -f certificate.p12
 
       - name: Build Tauri app
         run: npm run tauri build
         env:
-          # 只有上一步成功导入证书时才非空；为空时 Tauri 走原来的未签名流程
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # 仅当证书成功导入（MAC_SIGN_OK=true）时才传签名变量；否则一律留空
+          # → Tauri 走纯 ad-hoc 签名，绝不会调用 security import，构建不被坏证书拖垮
+          APPLE_SIGNING_IDENTITY: ${{ env.MAC_SIGN_OK == 'true' && env.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ env.MAC_SIGN_OK == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ env.MAC_SIGN_OK == 'true' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ env.MAC_SIGN_OK == 'true' && secrets.APPLE_TEAM_ID || '' }}
 
       - name: Verify macOS signature
         if: runner.os == 'macOS'
