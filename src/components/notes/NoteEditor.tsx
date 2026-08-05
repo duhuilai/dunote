@@ -908,6 +908,8 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
   // Insert row/column dropdown menu
   const [showInsertMenu, setShowInsertMenu] = useState(false)
   const insertMenuRef = useRef<HTMLDivElement>(null)
+  // Insert count for multi-row/multi-column insert
+  const [insertCount, setInsertCount] = useState(1)
 
   // Delete row/column dropdown menu
   const [showDeleteMenu, setShowDeleteMenu] = useState(false)
@@ -1852,16 +1854,105 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
                   borderRadius: '8px',
                   boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
                   border: `1px solid ${C.border}`,
-                  padding: '4px',
+                  padding: '8px',
                   zIndex: 10000,
-                  minWidth: '140px',
+                  minWidth: '168px',
                 }}
               >
+                {/* Insert count selector */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '2px 4px 8px',
+                    borderBottom: `1px solid ${C.border}`,
+                    marginBottom: '6px',
+                  }}
+                >
+                  <span style={{ fontSize: '11px', color: C.textMuted, whiteSpace: 'nowrap' }}>插入数量</span>
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setInsertCount((v) => Math.max(1, v - 1))}
+                    disabled={insertCount <= 1}
+                    style={{
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '4px',
+                      border: `1px solid ${C.border}`,
+                      background: C.surface,
+                      cursor: insertCount <= 1 ? 'not-allowed' : 'pointer',
+                      color: C.text,
+                      fontSize: '14px',
+                      lineHeight: '1',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >−</button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={insertCount}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      if (raw === '') {
+                        setInsertCount(1)
+                        return
+                      }
+                      const v = parseInt(raw, 10)
+                      if (!isNaN(v)) setInsertCount(Math.max(1, Math.min(100, v)))
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={{
+                      width: '48px',
+                      height: '22px',
+                      padding: '2px 4px',
+                      fontSize: '13px',
+                      textAlign: 'center',
+                      border: `1px solid ${C.border}`,
+                      borderRadius: '4px',
+                      fontFamily: 'inherit',
+                      color: C.text,
+                      background: C.surface,
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setInsertCount((v) => Math.min(100, v + 1))}
+                    disabled={insertCount >= 100}
+                    style={{
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '4px',
+                      border: `1px solid ${C.border}`,
+                      background: C.surface,
+                      cursor: insertCount >= 100 ? 'not-allowed' : 'pointer',
+                      color: C.text,
+                      fontSize: '14px',
+                      lineHeight: '1',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >+</button>
+                </div>
+
                 {[
-                  { icon: ArrowUp, label: '上方插行', action: () => editor.chain().focus().addRowBefore().run() },
-                  { icon: ArrowDown, label: '下方插行', action: () => editor.chain().focus().addRowAfter().run() },
-                  { icon: ArrowLeft, label: '左侧插列', action: () => editor.chain().focus().addColumnBefore().run() },
-                  { icon: ArrowRight, label: '右侧插列', action: () => editor.chain().focus().addColumnAfter().run() },
+                  { icon: ArrowUp, label: '上方插行', action: () => {
+                    for (let i = 0; i < insertCount; i++) editor.chain().focus().addRowBefore().run()
+                  } },
+                  { icon: ArrowDown, label: '下方插行', action: () => {
+                    for (let i = 0; i < insertCount; i++) editor.chain().focus().addRowAfter().run()
+                  } },
+                  { icon: ArrowLeft, label: '左侧插列', action: () => {
+                    for (let i = 0; i < insertCount; i++) editor.chain().focus().addColumnBefore().run()
+                  } },
+                  { icon: ArrowRight, label: '右侧插列', action: () => {
+                    for (let i = 0; i < insertCount; i++) editor.chain().focus().addColumnAfter().run()
+                  } },
                 ].map(({ icon: Icon, label, action }) => (
                   <button
                     key={label}
@@ -1891,6 +1982,9 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
                   >
                     <Icon size={14} style={{ color: C.primary }} />
                     <span>{label}</span>
+                    {insertCount > 1 && (
+                      <span style={{ marginLeft: 'auto', fontSize: '11px', color: C.textMuted }}>×{insertCount}</span>
+                    )}
                   </button>
                 ))}
               </div>
