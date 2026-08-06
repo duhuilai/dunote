@@ -50,7 +50,10 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   const [multiOpen, setMultiOpen] = useState<string | null>(null)
   const [toolPop, setToolPop] = useState<'sort' | 'filter' | null>(null)
   const [insertPop, setInsertPop] = useState(false)
+  const insertBtnRef = useRef<HTMLDivElement>(null)
+  const [insertPos, setInsertPos] = useState<{ left: number; top: number } | null>(null)
   const [insertCount, setInsertCount] = useState(1)
+  const [insertDir, setInsertDir] = useState<'top' | 'bottom' | 'left' | 'right'>('bottom')
 
   const tableWrapRef = useRef<HTMLDivElement>(null)
 
@@ -309,21 +312,60 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
           }}
         >
           {/* 插入行/列（统一下拉，支持数量） */}
-          <div style={{ position: 'relative' }}>
+          <div style={{ position: 'relative' }} ref={insertBtnRef}>
             <ToolBtn
-              onClick={() => { setInsertPop(!insertPop); setMultiOpen(null); setToolPop(null) }}
+              onClick={() => {
+                const next = !insertPop
+                setInsertPop(next)
+                setInsertPos(next && insertBtnRef.current ? rectOf(insertBtnRef.current) : null)
+                setMultiOpen(null); setToolPop(null)
+              }}
               icon={<Plus size={14} />}
               label="插入"
               active={insertPop}
             />
-            {insertPop && (
-              <Popover onClose={() => setInsertPop(false)}>
-                <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>插入数量</span>
+            {insertPop && insertPos && (
+              <Popover fixed pos={insertPos} onClose={() => { setInsertPop(false); setInsertPos(null) }}>
+                {/* 方向选择 */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginBottom: '8px' }}>
+                  {[
+                    { dir: 'top' as const, icon: ArrowUp, label: '上方插行' },
+                    { dir: 'bottom' as const, icon: ArrowDown, label: '下方插行' },
+                    { dir: 'left' as const, icon: ArrowLeft, label: '左侧插列' },
+                    { dir: 'right' as const, icon: ArrowRight, label: '右侧插列' },
+                  ].map(({ dir, icon: Icon, label }) => (
+                    <button
+                      key={dir}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => setInsertDir(dir)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '5px 8px',
+                        borderRadius: '6px',
+                        border: insertDir === dir ? `1.5px solid ${C.primary}` : `1px solid ${C.border}`,
+                        background: insertDir === dir ? C.primaryLight : 'transparent',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        fontSize: '11px',
+                        color: insertDir === dir ? C.primary : C.text,
+                        transition: 'all 0.12s',
+                      }}
+                    >
+                      <Icon size={12} />
+                      <span>{label.replace('插行', '').replace('插列', '')}</span>
+                    </button>
+                  ))}
+                </div>
+                {/* 数量选择 + 确认按钮 */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '11px', color: C.textMuted, whiteSpace: 'nowrap' }}>数量</span>
                   <button
-                    style={{ ...miniBtn, padding: '2px 6px' }}
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => setInsertCount((v) => Math.max(1, v - 1))}
                     disabled={insertCount <= 1}
+                    style={{ ...miniBtn, opacity: insertCount <= 1 ? 0.4 : 1 }}
                   >−</button>
                   <input
                     type="number"
@@ -331,17 +373,20 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                     max={100}
                     value={insertCount}
                     onChange={(e) => {
-                      const v = parseInt(e.target.value, 10)
+                      const raw = e.target.value
+                      if (raw === '') { setInsertCount(1); return }
+                      const v = parseInt(raw, 10)
                       if (!isNaN(v)) setInsertCount(Math.max(1, Math.min(100, v)))
-                      else if (e.target.value === '') setInsertCount(1)
                     }}
+                    onMouseDown={(e) => e.stopPropagation()}
                     style={{
-                      width: '52px',
-                      padding: '3px 6px',
+                      width: '48px',
+                      height: '24px',
+                      padding: '2px 4px',
                       fontSize: '13px',
                       textAlign: 'center',
                       border: `1px solid ${C.border}`,
-                      borderRadius: '6px',
+                      borderRadius: '4px',
                       fontFamily: 'inherit',
                       color: C.text,
                       background: C.surface,
@@ -349,47 +394,36 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                     }}
                   />
                   <button
-                    style={{ ...miniBtn, padding: '2px 6px' }}
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => setInsertCount((v) => Math.min(100, v + 1))}
                     disabled={insertCount >= 100}
+                    style={{ ...miniBtn, opacity: insertCount >= 100 ? 0.4 : 1 }}
                   >+</button>
                 </div>
-                <div style={{ height: '1px', background: C.border, margin: '6px 0' }} />
                 <button
-                  style={menuItemStyle}
-                  onClick={() => { insertRows(insertCount, 'top'); setInsertPop(false) }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (insertDir === 'top' || insertDir === 'bottom') insertRows(insertCount, insertDir)
+                    else insertColumns(insertCount, insertDir)
+                    setInsertPop(false); setInsertPos(null)
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: C.primary,
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    transition: 'opacity 0.12s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = '0.85' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = '1' }}
                 >
-                  <ArrowUp size={14} style={{ color: C.primary }} />
-                  <span>上方插行</span>
-                </button>
-                <button
-                  style={menuItemStyle}
-                  onClick={() => { insertRows(insertCount, 'bottom'); setInsertPop(false) }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-                >
-                  <ArrowDown size={14} style={{ color: C.primary }} />
-                  <span>下方插行</span>
-                </button>
-                <button
-                  style={menuItemStyle}
-                  onClick={() => { insertColumns(insertCount, 'left'); setInsertPop(false) }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-                >
-                  <ArrowLeft size={14} style={{ color: C.primary }} />
-                  <span>左侧插列</span>
-                </button>
-                <button
-                  style={menuItemStyle}
-                  onClick={() => { insertColumns(insertCount, 'right'); setInsertPop(false) }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-                >
-                  <ArrowRight size={14} style={{ color: C.primary }} />
-                  <span>右侧插列</span>
+                  确认插入
                 </button>
               </Popover>
             )}
@@ -691,6 +725,39 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* ── 新增行快捷按钮 ── */}
+        <div
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => insertRows(1, 'bottom')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+            padding: '7px 10px',
+            borderTop: `1px dashed ${C.border}`,
+            background: C.bg,
+            cursor: 'pointer',
+            fontSize: '12px',
+            color: C.textSecondary,
+            transition: 'all 0.12s',
+            userSelect: 'none',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = C.primaryLight
+            e.currentTarget.style.color = C.primary
+            e.currentTarget.style.borderColor = C.primary
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = C.bg
+            e.currentTarget.style.color = C.textSecondary
+            e.currentTarget.style.borderColor = C.border
+          }}
+        >
+          <Plus size={14} />
+          <span>新增一行</span>
         </div>
 
         {/* ── 统计栏 ── */}
