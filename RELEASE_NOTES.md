@@ -1,22 +1,10 @@
-# v0.2.20
+# v0.2.21
 
 ## 新增
-- **普通表格支持多行/多列插入**：「插入」下拉菜单增加数量选择器（1–100），「上方插行/下方插行/左侧插列/右侧插列」每项按钮执行对应数量次插入，菜单项右侧显示 `×N` 提示，所见即所得。
-- **智能表格「新增一行」快捷按钮**：表格滚动区下方新增虚线边框「+ 新增一行」按钮，点击在末尾追加一行，hover 高亮。
-- **智能表格「插入」菜单重构**：改为「方向选择（2×2 网格）→ 数量选择 → 确认插入」三步流程；方向按钮带选中高亮，底部大 `确认插入` 按钮，避免误点。
+- **标题层级扩展到 H1–H6**：工具栏在 H3 后追加 H4/H5/H6 三个标题按钮（lucide-react 自带图标），StarterKit 配置 `heading.levels` 扩展到 `[1..6]`；编辑器、预览、导出 PDF/HTML 的 h4/h5/h6 样式同步补齐（h4 14pt、h5 13pt、h6 12pt，宋体栈，半粗）。
+
+## 优化
+- **工具栏字体/字号实时反映当前光标位置**：字体、字号下拉触发按钮现在显示光标所在文本的实际字体/字号标签（无格式时回退「字体/字号」）；下拉菜单中对应当前值项高亮（主色底+主色字+加粗）。响应式订阅基于 `@tiptap/react` 的 `useEditorState`（deepEqual 比较，未变化不重渲），替代手写的 `selectionUpdate` + `setState`。
 
 ## 修复
-- **智能表格「插入」菜单被裁剪**：菜单由 `position:absolute` 改为 `fixed` + `createPortal`（挂 body），配合按钮 `getBoundingClientRect` 定位，不再受外层 `overflow:hidden` 容器遮挡。
-- **普通（TipTap 原生）表格 macOS 中文 IME 跳格/换行**（v0.2.18）：v3 加固，600ms 宽限期 + `beforeinput`/`input` 续期 + 读 ProseMirror 内部 `view.composing`，解决 WKWebView 时序差异。
-- **普通表格 macOS 空格确认**：v3 宽限期补拦截 ` `（空格），覆盖 macOS 中文输入法空格确认场景。
-- **笔记导出 PDF 表格右侧被截**：`normalizeTablesForExport` 剥掉 TipTap 生成的 `<col>` 显式宽度；导出样式升级为 `table-layout:fixed; word-break:break-word`，全部列完整可见。
-
-## 默认排版
-- **正文**：宋体（SimSun）小四（12pt），行距 1.5。
-- **一级标题**：黑体（SimHei）三号（16pt）加粗。
-- **二/三级标题**：宋体（SimSun）三号（16pt）半粗。
-- 字体栈跨平台回退：宋体→Songti SC(mac)/Source Han Serif；黑体→Heiti SC(mac)/PingFang SC。Windows 用 SimSun/SimHei，macOS 用对应中文字体。
-- 编辑器 + 导出 PDF/HTML + 历史预览 三处排版一致。
-
-## 字号选择器
-- 工具栏「字号」下拉由原 12 个数字字号（小八/小九/十号…四十八）升级为 **16 个中文字号标准**（GB/T 9851）：初号(42pt)、小初(36pt)、一号(26pt)、小一(24pt)、二号(22pt)、小二(18pt)、三号(16pt)、小三(15pt)、四号(14pt)、小四(12pt)、五号(10.5pt)、小五(9pt)、六号(7.5pt)、小六(6.5pt)、七号(5.5pt)、八号(5pt)。主/备工具栏共用同一数组。
+- **普通表格 macOS 中文 IME 录入跳开头 + 换行**（v0.2.20 后仍偶发）：macOS WKWebView 的 IME 合成结束与确认键（Enter/Space/Tab）到达间隔在部分输入法下会超过 600ms 宽限窗口，导致 keymap 的 `splitBlock` 在确认键上执行。本次加宽主宽限期 600→1200ms，并新增 2000ms 扩展宽限期——仅拦截导航键（Tab/Enter/Space），不误吞普通字符；合成时间戳在超时后保留供扩展窗口判断。仍带 `[IME-DIAG]` 诊断日志，若复现请回报 dtMs 与按键。
