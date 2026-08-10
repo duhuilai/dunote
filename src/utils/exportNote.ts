@@ -167,6 +167,9 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
     h1 { font-family: 'SimHei', 'Heiti SC', 'PingFang SC', 'Microsoft YaHei', 'Source Han Sans SC', 'Noto Sans CJK SC', sans-serif; font-size: 16pt; font-weight: 700; border-bottom: 1px solid #E2E8F0; padding-bottom: 0.3em; }
     h2 { font-family: 'SimSun', 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif; font-size: 16pt; border-bottom: 1px solid #E2E8F0; padding-bottom: 0.3em; }
     h3 { font-family: 'SimSun', 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif; font-size: 16pt; }
+    h4 { font-family: 'SimSun', 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif; font-size: 14pt; }
+    h5 { font-family: 'SimSun', 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif; font-size: 13pt; }
+    h6 { font-family: 'SimSun', 'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif; font-size: 12pt; }
     p { margin: 0.8em 0; }
     code {
       background: #F1F5F9;

@@ -1,4 +1,4 @@
-import { useEditor, EditorContent, type Editor } from '@tiptap/react'
+import { useEditor, useEditorState, EditorContent, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Underline from '@tiptap/extension-underline'
 import Highlight from '@tiptap/extension-highlight'
@@ -91,7 +91,7 @@ async function embedHtmlImages(html: string): Promise<string> {
 }
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
-  Heading1, Heading2, Heading3,
+  Heading1, Heading2, Heading3, Heading4, Heading5, Heading6,
   List, ListOrdered, Quote, Code, CodeSquare,
   Link2, Image as ImageIcon, Highlighter, Palette, ChevronDown,
   Undo, Redo, Minus, Download, FileText, FileCode, FileType, Clock,
@@ -195,7 +195,7 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
+        heading: { levels: [1, 2, 3, 4, 5, 6] },
       }),
       Underline,
       Highlight.configure({ multicolor: true }),
@@ -849,6 +849,24 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
     { label: '八号', value: '5pt' },
   ]
 
+  // 响应式追踪当前光标所在位置的字体/字号，驱动工具栏下拉显示
+  const { currentFontFamily, currentFontSize } = useEditorState({
+    editor,
+    selector: ({ editor: ed }) => {
+      if (!ed) return { currentFontFamily: '', currentFontSize: '' }
+      const attrs = ed.getAttributes('textStyle')
+      return {
+        currentFontFamily: (attrs.fontFamily as string | null) || '',
+        currentFontSize: (attrs.fontSize as string | null) || '',
+      }
+    },
+  }) || { currentFontFamily: '', currentFontSize: '' }
+
+  const currentFontFamilyLabel =
+    fontFamilies.find((f) => f.value === currentFontFamily)?.label ?? '字体'
+  const currentFontSizeLabel =
+    fontSizes.find((s) => s.value === currentFontSize)?.label ?? '字号'
+
   const handleFontSizeChange = (size: string) => {
     editor.chain().focus().setFontSize(size).run()
     setShowFontSizeMenu(false)
@@ -1102,6 +1120,27 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
         >
           <Heading3 size={16} />
         </ToolBtn>
+        <ToolBtn
+          active={editor.isActive('heading', { level: 4 })}
+          onClick={() => editor.chain().focus().toggleHeading({ level: 4 }).run()}
+          title="标题 4"
+        >
+          <Heading4 size={16} />
+        </ToolBtn>
+        <ToolBtn
+          active={editor.isActive('heading', { level: 5 })}
+          onClick={() => editor.chain().focus().toggleHeading({ level: 5 }).run()}
+          title="标题 5"
+        >
+          <Heading5 size={16} />
+        </ToolBtn>
+        <ToolBtn
+          active={editor.isActive('heading', { level: 6 })}
+          onClick={() => editor.chain().focus().toggleHeading({ level: 6 }).run()}
+          title="标题 6"
+        >
+          <Heading6 size={16} />
+        </ToolBtn>
 
         <Divider />
 
@@ -1133,7 +1172,7 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
               if (!showFontFamilyMenu) e.currentTarget.style.background = 'transparent'
             }}
           >
-            <span>字体</span>
+            <span>{currentFontFamilyLabel}</span>
             <ChevronDown size={12} />
           </button>
 
@@ -1157,9 +1196,11 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
                 }
               }}
             >
-              {fontFamilies.map(({ label, value }) => (
+              {fontFamilies.map(({ label, value }) => {
+                const isActive = value === currentFontFamily
+                return (
                 <button
-                  key={value}
+                  key={value || 'default'}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => handleFontFamilyChange(value)}
                   style={{
@@ -1168,20 +1209,22 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
                     padding: '8px 10px',
                     borderRadius: '7px',
                     border: 'none',
-                    background: 'transparent',
+                    background: isActive ? C.primaryLight : 'transparent',
                     cursor: 'pointer',
                     fontFamily: value || 'inherit',
                     fontSize: '13px',
-                    color: C.text,
+                    color: isActive ? C.primary : C.text,
+                    fontWeight: isActive ? 600 : 'normal',
                     textAlign: 'left',
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : '#F8FAFC' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : 'transparent' }}
                 >
                   {label}
                 </button>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -1214,7 +1257,7 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
               if (!showFontSizeMenu) e.currentTarget.style.background = 'transparent'
             }}
           >
-            <span>字号</span>
+            <span>{currentFontSizeLabel}</span>
             <ChevronDown size={12} />
           </button>
 
@@ -1238,7 +1281,9 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
                 }
               }}
             >
-              {fontSizes.map(({ label, value }) => (
+              {fontSizes.map(({ label, value }) => {
+                const isActive = value === currentFontSize
+                return (
                 <button
                   key={value}
                   onMouseDown={(e) => e.preventDefault()}
@@ -1249,20 +1294,22 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
                     padding: '8px 10px',
                     borderRadius: '7px',
                     border: 'none',
-                    background: 'transparent',
+                    background: isActive ? C.primaryLight : 'transparent',
                     cursor: 'pointer',
                     fontFamily: 'inherit',
                     fontSize: '13px',
-                    color: C.text,
+                    color: isActive ? C.primary : C.text,
+                    fontWeight: isActive ? 600 : 'normal',
                     textAlign: 'left',
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : '#F8FAFC' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : 'transparent' }}
                 >
                   {label}
                 </button>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
