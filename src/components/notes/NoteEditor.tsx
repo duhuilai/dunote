@@ -174,13 +174,18 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
   const lastComposeTsRef = useRef<number>(0)
   // 合成态宽限期时长：远大于 Chromium 默认量级，给 macOS 确认键留足到达窗口。
   // 期间只拦截 Tab/Enter/空格等会移动光标/换行的键，正常连续输入极少被吞。
-  const IME_GRACE_MS = 600
+  // 注：实测 macOS WKWebView 上 IME 确认键晚到可达 700~1000ms，600ms 不够；提到 1200ms。
+  const IME_GRACE_MS = 1200
+  // 扩展宽限：宽限期到期后，再多保留 800ms 仅拦截「会移动光标/换行的键」。
+  // 这样既不吞正常字符输入，又能在 macOS 极慢的确认键到达时仍拦住 splitBlock / goToNextCell。
+  const IME_EXTENDED_GRACE_MS = 2000
   const armComposing = () => {
     composingRef.current = true
     lastComposeTsRef.current = Date.now()
     if (composingTimerRef.current) clearTimeout(composingTimerRef.current)
     composingTimerRef.current = window.setTimeout(() => {
       composingRef.current = false
+      // 不重置 lastComposeTsRef，扩展宽限期用它判断
     }, IME_GRACE_MS)
   }
 
@@ -274,12 +279,25 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
         ) {
           return true
         }
+        // 扩展宽限期（宽限到期后，再保留 IME_EXTENDED_GRACE_MS 时间窗口）：
+        // macOS 上 IME 确认键可能晚于 1200ms 宽限期到达（实测可达 1500ms+），
+        // 此时若不拦截，Enter 会触发 splitBlock 在单元格内插入新段，光标跳到新段开头，
+        // 表现就是「文字插到了原段落但光标在新段开头 + 多出一个空行」。
+        // 这里仅拦截会移动光标/换行的键，不吞普通字符输入。
+        const isNavKey = event.key === 'Tab' || event.key === 'Enter' || event.key === ' ' || event.code === 'Space'
+        const inExtendedGrace =
+          lastComposeTsRef.current > 0 &&
+          Date.now() - lastComposeTsRef.current < IME_EXTENDED_GRACE_MS
+        if (isNavKey && inExtendedGrace) {
+          return true
+        }
         // ── 诊断（仅 macOS 等时序异常时触发）──
-        // 若近期有合成活动、但确认键/导航键在宽限期外才到达而未被拦截，记录事件特征，
+        // 若近期有合成活动、但确认键/导航键在扩展宽限期外才到达而未被拦截，记录事件特征，
         // 用于定位 macOS IME 时序（dtMs=距上次合成活动毫秒数）。正常流程不会进入此分支。
         if (
+          isNavKey &&
+          !inExtendedGrace &&
           lastComposeTsRef.current > 0 &&
-          (event.key === 'Tab' || event.key === 'Enter' || event.key === ' ' || event.code === 'Space') &&
           Date.now() - lastComposeTsRef.current < 4000
         ) {
           console.warn('[IME-DIAG] uncaught nav/confirm key after compose:', {
