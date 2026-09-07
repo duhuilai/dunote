@@ -10,6 +10,7 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { DataTable } from '@/extensions/dataTable'
 import { SearchExtension, searchPluginKey } from '@/extensions/search'
+import { ImeGuard, imeGrace, IME_GRACE_MS as GRACE_MS, IME_EXTENDED_GRACE_MS as EXT_GRACE_MS } from '@/extensions/imeGuard'
 import { Table } from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableCell from '@tiptap/extension-table-cell'
@@ -22,6 +23,7 @@ import { SlashCommand } from './SlashCommand'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { showPrompt } from '@/utils/prompt'
 import { pickImageFile } from '@/utils/imageEmbed'
+import { saveNoteTitle, toRelPath } from '@/utils/noteMeta'
 import type { Note } from '@/types'
 
 /* ─── 将图片文件转为 dataURL（base64），用于把粘贴/拖入的图片内嵌进笔记，避免 blob: 临时地址丢失 ─── */
@@ -135,18 +137,25 @@ interface NoteEditorProps {
   note: Note
   /** 本地文件笔记落盘后，同步更新内存中的 localNotes（selectedNote 来源），避免切回时读到旧内容导致图片丢失 */
   onLocalPersist?: (noteId: string, content: string) => void
+  /** 本地文件笔记标题变更后，同步更新内存中的 localNotes（让侧栏显示新标题） */
+  onLocalTitlePersist?: (noteId: string, title: string) => void
   /** 外部强制重载信号：恢复历史后 +1，让当前笔记（note.id 不变）重新从磁盘/内存加载最新内容 */
   reloadToken?: number
 }
 
-export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: NoteEditorProps) {
+export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, reloadToken = 0 }: NoteEditorProps) {
   const { updateNote, setShowHistory, setHistory, settings, showToast, localRootFolder, setSelectedNoteId } = useAppStore()
+  // 标题受控：与 note.title 同步，但允许本地临时编辑态（输入中文时如果直接绑 note.title，每次输入都会触发 store 更新，可能干扰 IME/光标）
+  const [titleDraft, setTitleDraft] = useState<string>(note.title || '')
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [exportTarget, setExportTarget] = useState<{ format: ExportFormat; title: string; html: string } | null>(null)
   const [isCreatingHistory, setIsCreatingHistory] = useState(false)
   const creatingHistoryRef = useRef(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 让 onLocalTitlePersist 闭包也能拿到最新值（避免 useCallback 闭包陷阱）
+  const onLocalTitlePersistRef = useRef(onLocalTitlePersist)
+  onLocalTitlePersistRef.current = onLocalTitlePersist
   const baselineContentRef = useRef<string>(note.content || '')
   const lastEmittedRef = useRef<string>('') // 记录编辑器最近一次输出的 HTML，用于区分“自编辑”与“外部内容变更”
   const editorRef = useRef<Editor | null>(null)
@@ -164,6 +173,10 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
   // 让 useEditor 配置闭包里也能拿到最新的 onLocalPersist（避免闭包捕获初始值）
   const onLocalPersistRef = useRef(onLocalPersist)
   onLocalPersistRef.current = onLocalPersist
+  // 标题落盘去抖：避免连续输入时把整个 meta 文件重写 N 次
+  const titleCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 最近一次提交到磁盘/store 的标题（用于跳过未变更的写入）
+  const lastCommittedTitleRef = useRef<string>(note.title || '')
   // IME 合成状态：handleDOMEvents 追踪，handleKeyDown 据此放行所有按键。
   // macOS WKWebView 的 IME 事件时序与 Chromium 不同：确认键 keydown 常在 compositionend 之后、
   // 且 isComposing=false / keyCode≠229 才到达，单纯依赖 compositionstart/end 不够。
@@ -175,17 +188,20 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
   // 合成态宽限期时长：远大于 Chromium 默认量级，给 macOS 确认键留足到达窗口。
   // 期间只拦截 Tab/Enter/空格等会移动光标/换行的键，正常连续输入极少被吞。
   // 注：实测 macOS WKWebView 上 IME 确认键晚到可达 700~1000ms，600ms 不够；提到 1200ms。
-  const IME_GRACE_MS = 1200
+  const IME_GRACE_MS = GRACE_MS
   // 扩展宽限：宽限期到期后，再多保留 800ms 仅拦截「会移动光标/换行的键」。
   // 这样既不吞正常字符输入，又能在 macOS 极慢的确认键到达时仍拦住 splitBlock / goToNextCell。
-  const IME_EXTENDED_GRACE_MS = 2000
+  const IME_EXTENDED_GRACE_MS = EXT_GRACE_MS
   const armComposing = () => {
     composingRef.current = true
     lastComposeTsRef.current = Date.now()
+    // 同步写入 ImeGuard 扩展的模块状态，供 filterTransaction 读取
+    imeGrace.arm()
     if (composingTimerRef.current) clearTimeout(composingTimerRef.current)
     composingTimerRef.current = window.setTimeout(() => {
       composingRef.current = false
       // 不重置 lastComposeTsRef，扩展宽限期用它判断
+      // ImeGuard 端以 lastTs+EXT_GRACE_MS 判定，这里不需要显式 end()
     }, IME_GRACE_MS)
   }
 
@@ -223,6 +239,7 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       FontSize,
       SlashCommand,
       SearchExtension,
+      ImeGuard,
     ],
     content: note.content,
     editorProps: {
@@ -245,6 +262,17 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
         beforeinput: (_view, ev) => {
           const e = ev as InputEvent
           if (e.isComposing) armComposing()
+          // 兜底拦截：宽限期内若浏览器派发 insertParagraph / insertLineBreak /
+          // insertFromComposition，阻止默认行为（避免 ProseMirror 转成 splitBlock）。
+          // ImeGuard.filterTransaction 是主防线，这里是前置拦截（部分浏览器在
+          // filterTransaction 看到事务前可能已经派发 beforeinput）。
+          if (!e.isComposing && imeGrace.isInGrace()) {
+            const t = e.inputType
+            if (t === 'insertParagraph' || t === 'insertLineBreak' || t === 'insertFromComposition') {
+              e.preventDefault()
+              return true
+            }
+          }
           return false
         },
         input: (_view, ev) => {
@@ -542,6 +570,77 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
       editorMetaRef.current = { noteId: targetId, isLocal, path }
     })
   }, [editor, note.id, reloadToken])
+
+  // 切笔记时同步标题草稿
+  useEffect(() => {
+    setTitleDraft(note.title || '')
+    lastCommittedTitleRef.current = note.title || ''
+  }, [note.id, note.title])
+
+  // 标题编辑：立即更新本地草稿（保证受控），500ms 防抖后落盘
+  const handleTitleChange = useCallback((value: string) => {
+    setTitleDraft(value)
+    if (titleCommitTimerRef.current) clearTimeout(titleCommitTimerRef.current)
+    titleCommitTimerRef.current = setTimeout(() => {
+      titleCommitTimerRef.current = null
+      const meta = editorMetaRef.current
+      // 防止切换笔记后旧计时器把标题写到错误笔记
+      if (meta.noteId !== note.id) return
+      const trimmed = (value || '').trim()
+      // 标题未变（与上次提交值一致）→ 跳过
+      if ((lastCommittedTitleRef.current || '') === trimmed) return
+      lastCommittedTitleRef.current = trimmed
+      const isLocal = !!(note as any)._isLocalFile
+      if (isLocal) {
+        // 本地文件笔记：写 .dunote-meta.json + 通知 NotesPage 同步 localNotes
+        const root = localRootFolder
+        const filePath = (note as any).filePath as string | undefined
+        if (root && filePath) {
+          const rel = toRelPath(root, filePath)
+          // 写空标题视为删除自定义标题（回退到文件名）
+          saveNoteTitle(root, rel, trimmed).catch((e) => {
+            console.error('[NoteEditor] 写入本地标题失败:', e)
+            showToast('标题保存失败', 'error')
+          })
+        }
+        onLocalTitlePersistRef.current?.(meta.noteId, trimmed)
+      } else {
+        // 普通（内存）笔记：直接更新 store
+        updateNote(meta.noteId, { title: trimmed })
+      }
+    }, 500)
+  }, [note, updateNote, localRootFolder, showToast])
+
+  // 切换笔记 / 卸载前：立即 flush 待提交的标题
+  useEffect(() => {
+    return () => {
+      if (titleCommitTimerRef.current) {
+        clearTimeout(titleCommitTimerRef.current)
+        titleCommitTimerRef.current = null
+        // 同步把草稿标题落盘（不通过防抖）
+        const meta = editorMetaRef.current
+        const trimmed = (titleDraft || '').trim()
+        if ((lastCommittedTitleRef.current || '') !== trimmed && trimmed) {
+          lastCommittedTitleRef.current = trimmed
+          const isLocal = !!(note as any)._isLocalFile
+          if (isLocal) {
+            const root = localRootFolder
+            const filePath = (note as any).filePath as string | undefined
+            if (root && filePath) {
+              const rel = toRelPath(root, filePath)
+              // fire-and-forget：组件卸载中无法 await
+              saveNoteTitle(root, rel, trimmed).catch((e) =>
+                console.error('[NoteEditor] flush 标题失败:', e)
+              )
+            }
+            onLocalTitlePersistRef.current?.(meta.noteId, trimmed)
+          } else {
+            updateNote(meta.noteId, { title: trimmed })
+          }
+        }
+      }
+    }
+  }, [note.id])
 
   // ─── 检索功能：打开 / 检索 / 上一个下一个 / 关闭 ───
   const clearSearchState = useCallback(() => {
@@ -1068,7 +1167,8 @@ export default function NoteEditor({ note, onLocalPersist, reloadToken = 0 }: No
         <input
           key={note.id}
           type="text"
-          defaultValue={note.title}
+          value={titleDraft}
+          onChange={(e) => handleTitleChange(e.target.value)}
           placeholder="笔记标题"
           style={{
             width: '100%',

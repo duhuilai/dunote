@@ -15,7 +15,7 @@ import { readDir, readTextFile, writeTextFile, mkdir, exists, remove } from '@ta
 import { appConfigDir, join, dirname } from '@tauri-apps/api/path'
 import { open as shellOpen } from '@tauri-apps/plugin-shell'
 import { marked } from 'marked'
-import { loadNoteTypes, saveNoteType, toRelPath } from '@/utils/noteMeta'
+import { loadNoteTypes, saveNoteType, toRelPath, loadNoteTitles } from '@/utils/noteMeta'
 import { loadOrderData, applyOrder, orderOf, compareByOrder, reorderIds, shiftId } from '@/utils/noteOrder'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 
@@ -1051,6 +1051,13 @@ export default function NotesPage() {
     )
   }, [setLocalNotes])
 
+  // 本地文件笔记标题变更后，同步更新内存中的 localNotes（让侧栏立即显示新标题）
+  const handleLocalTitlePersist = useCallback((noteId: string, title: string) => {
+    setLocalNotes((prev) =>
+      prev.map((n) => (n.id === noteId ? { ...n, title, updatedAt: new Date().toISOString() } : n)),
+    )
+  }, [setLocalNotes])
+
   // 用文件管理器（访达 / 资源管理器）打开目录
   const revealFolder = useCallback(async (path: string) => {
     try {
@@ -1151,6 +1158,7 @@ export default function NotesPage() {
     const folders: import('@/types').NoteFolder[] = []
     const notes: import('@/types').Note[] = []
     const noteTypeMap = await loadNoteTypes(dirPath)
+    const titleMap = await loadNoteTitles(dirPath)
     // 手动排序表（相对路径 -> 序号），未记录的条目回落名称序并排在最后
     const orderData = await loadOrderData(dirPath)
 
@@ -1183,9 +1191,12 @@ export default function NotesPage() {
             const fullPath = currentPath + '/' + entry.name
             const relPath = toRelPath(dirPath, fullPath)
             const now = new Date().toISOString()
+            // 优先用 meta 里的自定义标题，回退到文件名（去掉 .html 后缀）
+            const customTitle = titleMap[relPath]
+            const title = (customTitle && customTitle.trim()) || entry.name.replace(/\.html$/i, '')
             notes.push({
               id: `local-${fullPath}`,
-              title: entry.name.replace(/\.html$/i, ''),
+              title,
               content: '', // Will be loaded on demand when selected
               filePath: fullPath,
               createdAt: now,
@@ -2014,7 +2025,7 @@ export default function NotesPage() {
         }}
       >
         {selectedNote ? (
-          <NoteEditor note={selectedNote} onLocalPersist={handleLocalNotePersist} reloadToken={reloadToken} />
+          <NoteEditor note={selectedNote} onLocalPersist={handleLocalNotePersist} onLocalTitlePersist={handleLocalTitlePersist} reloadToken={reloadToken} />
         ) : (
           <div
             style={{
