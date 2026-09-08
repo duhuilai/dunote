@@ -34,8 +34,54 @@ const HL_MATCH = 'rgba(250, 204, 21, 0.38)'
 const HL_CURRENT = 'rgba(250, 204, 21, 0.72)'
 
 type SortState = { colId: string; dir: 'asc' | 'desc' } | null
-type FilterMode = 'contains' | 'equals' | 'empty'
+/**
+ * 筛选模式。
+ * - text 类：contains / equals / empty
+ * - number / progress / rating：额外支持 gt / gte / lt / lte（按数值比较，避免 "10" 与 "10.0" 字符串不等）
+ * - checkbox：checked / unchecked（勾选列没有「包含/等于」语义）
+ */
+type FilterMode =
+  | 'contains'
+  | 'equals'
+  | 'empty'
+  | 'gt'
+  | 'gte'
+  | 'lt'
+  | 'lte'
+  | 'checked'
+  | 'unchecked'
 type FilterState = { colId: string; mode: FilterMode; value: string }
+
+/** 数值型列：筛选时按 Number 比较而非字符串比较 */
+function isNumericType(t: FieldType | undefined): boolean {
+  return t === 'number' || t === 'progress' || t === 'rating'
+}
+
+/** 该列类型可用的筛选模式（供下拉按列类型动态渲染） */
+function modesForType(t: FieldType | undefined): FilterMode[] {
+  if (t === 'checkbox') return ['checked', 'unchecked']
+  if (isNumericType(t)) return ['equals', 'gt', 'gte', 'lt', 'lte', 'contains', 'empty']
+  return ['contains', 'equals', 'empty']
+}
+
+const MODE_LABELS: Record<FilterMode, string> = {
+  contains: '包含',
+  equals: '等于',
+  empty: '为空',
+  gt: '大于',
+  gte: '大于等于',
+  lt: '小于',
+  lte: '小于等于',
+  checked: '已勾选',
+  unchecked: '未勾选',
+}
+
+/** 切换筛选列时，把不适用的模式纠正为该列的默认模式 */
+function normalizeMode(mode: FilterMode, t: FieldType | undefined): FilterMode {
+  const allowed = modesForType(t)
+  if (allowed.includes(mode)) return mode
+  return allowed[0]
+}
 
 export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   const columns: Column[] = (node.attrs.columns as Column[]) || []
@@ -200,12 +246,29 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
     filters.forEach((f) => {
       if (!f.colId) return
       const t = colType(f.colId)
+      const numeric = isNumericType(t)
+      // 数值比较：目标值只解析一次，非法输入则视为「无匹配」而非抛错
+      const target = numeric ? parseFloat(String(f.value ?? '').replace(/,/g, '')) : NaN
       list = list.filter((r) => {
         const v = getCell(r, f.colId)
+        // 勾选列：语义明确为是否勾选，不走「空值」判定
+        if (f.mode === 'checked') return v === true
+        if (f.mode === 'unchecked') return v !== true
         if (f.mode === 'empty') {
           const empty =
-            v === '' || v === null || v === undefined || (Array.isArray(v) && v.length === 0) || v === false
+            v === '' || v === null || v === undefined || (Array.isArray(v) && v.length === 0)
           return empty
+        }
+        // 数值比较（大于/小于/等于）
+        if (numeric && f.mode !== 'contains') {
+          if (Number.isNaN(target)) return false
+          const n = typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(/,/g, ''))
+          if (Number.isNaN(n)) return false
+          if (f.mode === 'equals') return n === target
+          if (f.mode === 'gt') return n > target
+          if (f.mode === 'gte') return n >= target
+          if (f.mode === 'lt') return n < target
+          if (f.mode === 'lte') return n <= target
         }
         const s = cellToText(v, t)
         if (f.mode === 'equals') return s === f.value
@@ -491,20 +554,33 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                 {filters.length === 0 && <div style={{ fontSize: '11px', color: C.textMuted }}>暂无筛选条件</div>}
                 {filters.map((f, i) => (
                   <div key={i} style={{ display: 'flex', gap: '4px', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap' }}>
-                    <select value={f.colId} onChange={(e) => updateFilter(i, { ...f, colId: e.target.value })} style={selStyle}>
+                    <select
+                      value={f.colId}
+                      onChange={(e) => {
+                        const nextColId = e.target.value
+                        const t = columns.find((c) => c.id === nextColId)?.type
+                        // 换列后旧模式可能不适用（如「大于」切到文本列），纠正为该列默认模式
+                        updateFilter(i, { ...f, colId: nextColId, mode: normalizeMode(f.mode, t) })
+                      }}
+                      style={selStyle}
+                    >
                       <option value="">列…</option>
                       {columns.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
                     </select>
-                    <select value={f.mode} onChange={(e) => updateFilter(i, { ...f, mode: e.target.value as FilterMode })} style={selStyle}>
-                      <option value="contains">包含</option>
-                      <option value="equals">等于</option>
-                      <option value="empty">为空</option>
+                    <select
+                      value={f.mode}
+                      onChange={(e) => updateFilter(i, { ...f, mode: e.target.value as FilterMode })}
+                      style={selStyle}
+                    >
+                      {modesForType(colType(f.colId)).map((m) => (
+                        <option key={m} value={m}>{MODE_LABELS[m]}</option>
+                      ))}
                     </select>
-                    {f.mode !== 'empty' && (
+                    {f.mode !== 'empty' && f.mode !== 'checked' && f.mode !== 'unchecked' && (
                       <ImeTextField
                         value={f.value}
                         onChange={(v) => updateFilter(i, { ...f, value: v })}
-                        placeholder="值"
+                        placeholder={isNumericType(colType(f.colId)) ? '数值' : '值'}
                         style={{ ...inputStyle, width: '90px' }}
                       />
                     )}
@@ -513,7 +589,7 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                     </button>
                   </div>
                 ))}
-                <button style={miniBtn} onClick={() => setFilters((arr) => [...arr, { colId: columns[0]?.id ?? '', mode: 'contains', value: '' }])}>
+                <button style={miniBtn} onClick={() => setFilters((arr) => [...arr, { colId: columns[0]?.id ?? '', mode: normalizeMode('contains', columns[0]?.type), value: '' }])}>
                   + 添加条件
                 </button>
               </Popover>

@@ -1,4 +1,5 @@
 import { Download, RefreshCw, CheckCircle2, AlertCircle, RotateCcw } from 'lucide-react'
+import { useState } from 'react'
 import { useAppStore } from '@/store'
 import {
   downloadUpdate,
@@ -19,6 +20,8 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
   const setUpdateDownload = useAppStore((s) => s.setUpdateDownload)
   const resetUpdateDownload = useAppStore((s) => s.resetUpdateDownload)
   const showToast = useAppStore((s) => s.showToast)
+  /** macOS 手动安装引导文案（dmg 需用户自行拖拽，不能静默退出） */
+  const [installHint, setInstallHint] = useState<string | null>(null)
 
   if (!updateInfo?.hasUpdate) return null
 
@@ -31,6 +34,7 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
       return
     }
     resetUpdateDownload()
+    setInstallHint(null)
     setUpdateDownload({ status: 'downloading', progress: 0, loaded: 0, total: 0, filePath: null, error: null })
     const res = await downloadUpdate(url, name, (loaded, total) => {
       const pct = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : 0
@@ -47,8 +51,17 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
 
   const handleInstall = async () => {
     if (!dl.filePath) return
+    setInstallHint(null)
     const res = await openInstaller(dl.filePath)
-    if (!res.ok) showToast(res.message, 'error')
+    if (!res.ok) {
+      showToast(res.message, 'error')
+      return
+    }
+    // macOS：dmg 只是挂载镜像，需用户手动拖入「应用程序」，不能无声退出
+    if (res.manualInstall) {
+      setInstallHint(res.message)
+      showToast('已打开安装包，请将 duNote 拖入「应用程序」', 'success')
+    }
   }
 
   const indeterminate = dl.status === 'downloading' && dl.total <= 0
@@ -72,13 +85,35 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
         安装
       </button>
     )
-    if (variant === 'compact') return installBtn
+    if (variant === 'compact') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+          {installBtn}
+          {installHint && (
+            <div style={{ fontSize: 11, color: '#166534', lineHeight: 1.5 }}>{installHint}</div>
+          )}
+        </div>
+      )
+    }
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        {installBtn}
-        <span style={{ fontSize: 12, color: '#166534' }}>
-          安装包已下载完成{updateInfo.assetName ? `（${updateInfo.assetName}）` : ''}
-        </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {installBtn}
+          <span style={{ fontSize: 12, color: '#166534' }}>
+            安装包已下载完成{updateInfo.assetName ? `（${updateInfo.assetName}）` : ''}
+          </span>
+        </div>
+        {installHint && (
+          <div
+            style={{
+              fontSize: 12, color: '#166534', lineHeight: 1.6,
+              background: '#F0FDF4', border: '1px solid #BBF7D0',
+              borderRadius: 8, padding: '8px 12px',
+            }}
+          >
+            {installHint}
+          </div>
+        )}
       </div>
     )
   }

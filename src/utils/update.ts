@@ -78,11 +78,44 @@ const emptyUpdate = (currentVersion: string): UpdateInfo => ({
   checked: true,
 })
 
-/** 通过 userAgent 判断运行平台（WebView 中可靠） */
+/**
+ * 判断运行平台。
+ *
+ * 注意：不能只依赖 userAgent —— 自打包的 WebView 在某些配置下 UA 不含平台特征，
+ * 会导致挑错安装包（macOS 拿到 .exe）。这里按可靠性依次尝试三个信号：
+ *  1. navigator.userAgentData.platform（Chromium / WebView2 提供的结构化平台信息）
+ *  2. navigator.platform（WKWebView / WebView2 均支持，比 UA 字符串稳定）
+ *  3. userAgent 正则兜底
+ */
 function detectPlatform(): 'windows' | 'macos' | 'linux' {
-  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
-  if (/Windows/i.test(ua)) return 'windows'
-  if (/Mac/i.test(ua)) return 'macos'
+  if (typeof navigator === 'undefined') return 'linux'
+  const n = navigator as unknown as {
+    userAgentData?: { platform?: string }
+    platform?: string
+    userAgent?: string
+  }
+
+  const matchPlatform = (raw: string): 'windows' | 'macos' | 'linux' | null => {
+    const s = (raw || '').toLowerCase()
+    if (!s) return null
+    if (s.includes('win')) return 'windows'
+    if (s.includes('mac') || s.includes('darwin')) return 'macos'
+    if (s.includes('linux') || s.includes('x11')) return 'linux'
+    return null
+  }
+
+  // 1) 结构化平台信息（最可靠）
+  const fromUad = matchPlatform(n.userAgentData?.platform || '')
+  if (fromUad) return fromUad
+
+  // 2) navigator.platform
+  const fromNp = matchPlatform(n.platform || '')
+  if (fromNp) return fromNp
+
+  // 3) UA 兜底
+  const ua = n.userAgent || ''
+  if (/Windows|Win32|Win64/i.test(ua)) return 'windows'
+  if (/Macintosh|Mac OS X|Darwin/i.test(ua)) return 'macos'
   return 'linux'
 }
 
@@ -212,18 +245,31 @@ export async function downloadUpdate(
 }
 
 /**
- * 用系统关联程序打开已下载的安装包（Windows 启动 exe/msi 安装向导，macOS 挂载 dmg），
- * 随后真正退出当前 App 进程。
+ * 用系统关联程序打开已下载的安装包。
  *
- * 注意：macOS 上仅 close() 窗口不会结束进程（App 仍驻留 Dock），导致安装包无法替换
- * 正在运行的旧 app，必须调用 process 插件的 exit() 终止整个进程。
+ * - Windows：启动 exe/msi 安装向导后**必须退出**当前进程，否则安装程序无法替换
+ *   正在运行的旧文件。macOS 同理需要真正 exit()（仅 close() 窗口不会结束进程）。
+ * - macOS：`.dmg` 只是挂载磁盘镜像并弹出访达窗口，仍需用户手动把 duNote 拖进
+ *   「应用程序」。若此处直接 exit(0)，用户会看到 dmg 窗口但 App 已消失、毫无提示，
+ *   体验很差。因此 macOS 不自动退出，改为返回 manualInstall 标记，由 UI 引导用户
+ *   完成拖拽安装并自行退出。
  */
 export async function openInstaller(
   filePath: string,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; manualInstall?: boolean }> {
   try {
-    // 1) 先让系统打开安装包（macOS 挂载 dmg / Windows 启动安装向导）
+    const platform = detectPlatform()
+    // 1) 让系统打开安装包（macOS 挂载 dmg / Windows 启动安装向导）
     await open(filePath)
+
+    if (platform === 'macos') {
+      return {
+        ok: true,
+        manualInstall: true,
+        message: '已打开安装包：请在访达窗口中将 duNote 拖入「应用程序」文件夹完成安装，然后手动退出旧版本。',
+      }
+    }
+
     // 2) 略作等待，确保安装程序已被系统启动，再退出当前 App 进程，
     //    避免 macOS 上窗口关闭但进程仍在运行、安装包无法替换旧 app 的问题。
     await new Promise((r) => setTimeout(r, 300))

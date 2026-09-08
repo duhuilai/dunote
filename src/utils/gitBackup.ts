@@ -15,6 +15,7 @@ import { makeTauriFs } from './gitFs'
 import { tauriHttp } from './gitHttp'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import * as tauriFs from '@tauri-apps/plugin-fs'
+import { join } from '@tauri-apps/api/path'
 
 const GIT_USER_NAME = 'duNote'
 const GIT_USER_EMAIL = 'dunote@local'
@@ -57,7 +58,9 @@ function getFs(repoDir: string) {
 export async function ensureRepo(repoDir: string): Promise<BackupResult> {
   const fs = getFs(repoDir)
   try {
-    const gitPath = `${repoDir.replace(/\/+$/, '')}/.git`.replace(/\//g, '\\')
+    // 用 @tauri-apps/api/path 的 join 拼 .git 路径：
+    // 之前把 '/' 全替换成 '\'，在 macOS（POSIX 路径）上是非法路径，exists 恒 false → 每次都重新 git init，备份链路异常。
+    const gitPath = await join(repoDir.replace(/[\\/]+$/, ''), '.git')
     const hasGit = await tauriFs.exists(gitPath)
     if (!hasGit) {
       await git.init({ fs, dir: repoDir, defaultBranch: 'main' })
@@ -133,36 +136,57 @@ export async function readVersion(
   }
 }
 
-/** 推送到 Gitee 远程（force 确保备份仓库始终反映本地全部版本记录） */
+/**
+ * 推送到 Gitee 远程。
+ *
+ * 默认**不**强推（force:false）：若远端分支有本地没有的新提交（多设备备份场景常见），
+ * 取消推送并返回明确提示，避免静默覆盖远端历史导致版本丢失。
+ * 调用方可显式传 force:true 走强推（此时也会在返回 message 里标注）。
+ */
 export async function pushToRemote(opts: {
   repoDir: string
   remoteUrl: string
   token: string
   username: string
   branch?: string
+  /** 是否强推（默认 false）。仅当确认远端历史可丢弃时才应传 true。 */
+  force?: boolean
 }): Promise<BackupResult> {
   const fs = getFs(opts.repoDir)
   const branch = opts.branch || 'main'
+  const useForce = opts.force === true
   try {
     try {
       await git.addRemote({ fs, dir: opts.repoDir, remote: GITEE_REMOTE, url: opts.remoteUrl, force: true })
     } catch {
       /* 已存在则忽略 */
     }
-    await git.push({
-      fs,
-      dir: opts.repoDir,
-      http: tauriHttp,
-      remote: GITEE_REMOTE,
-      ref: branch,
-      force: true,
-      onAuth: () => ({ username: opts.username, password: opts.token }),
-    })
+    try {
+      await git.push({
+        fs,
+        dir: opts.repoDir,
+        http: tauriHttp,
+        remote: GITEE_REMOTE,
+        ref: branch,
+        force: useForce,
+        onAuth: () => ({ username: opts.username, password: opts.token }),
+      })
+    } catch (pushErr) {
+      const m = errMsg(pushErr)
+      // 非快进：远端有本地没有的提交。不强推，交给用户决定（先拉取 / 确认后再推）。
+      if (!useForce && /non-fast-forward|fetch first|rejected|PushRejected|would clobber/i.test(m)) {
+        return {
+          success: false,
+          message: `远端分支 ${branch} 上有本地没有的新提交，已取消推送以免覆盖。请先在设置里「从 Gitee 拉取」，或确认可覆盖后重试。`,
+        }
+      }
+      throw pushErr
+    }
     // Gitee 新建仓库默认分支是 master，而本地/推送分支是 main。
     // 若不改默认分支，网页默认展示 master（不存在/为空）→ 用户看到「仓库为空」。
     // push 成功后把 Gitee 仓库默认分支设为我们推送的分支，网页即可直接看到备份文件。
     const branchMsg = await setGiteeDefaultBranch(opts.remoteUrl, opts.token, branch)
-    return { success: true, message: branchMsg }
+    return { success: true, message: useForce ? `${branchMsg ?? ''}（强推覆盖远端）` : branchMsg }
   } catch (e) {
     return { success: false, message: errMsg(e) }
   }

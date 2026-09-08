@@ -260,25 +260,46 @@ async function buildPdfBytes(title: string, htmlContent: string): Promise<Uint8A
   const fullHtml = buildHtmlDocument(title, normalizeTablesForExport(htmlContent))
   // 离屏渲染容器：用 0 尺寸的裁切外层把内容挡在用户视线外，但被截元素本身位于视口坐标 (0,0)，
   // 这样 html2canvas 能在“屏幕坐标”正确读取布局（之前放到 left:-10000px 会被截成空白页）。
+  // 外层 visibility:hidden 防止渲染期间内容闪现（宽高为 0 + overflow:hidden 已裁切，
+  // 这里是双保险）；内层必须显式 visibility:visible，否则 html2canvas 克隆时继承到
+  // hidden 会导出整页空白。pointer-events:none 保证不吃掉用户点击。
   const wrapper = document.createElement('div')
-  wrapper.setAttribute('style', 'position:fixed; left:0; top:0; width:0; height:0; overflow:hidden; z-index:0;')
+  wrapper.setAttribute('aria-hidden', 'true')
+  wrapper.setAttribute(
+    'style',
+    'position:fixed; left:0; top:0; width:0; height:0; overflow:hidden; visibility:hidden; pointer-events:none; z-index:-1;',
+  )
   const container = document.createElement('div')
-  container.setAttribute('style', 'width:794px; background:#fff; padding:40px; box-sizing:border-box;')
+  container.setAttribute(
+    'style',
+    'width:794px; background:#fff; padding:40px; box-sizing:border-box; visibility:visible;',
+  )
   container.innerHTML = fullHtml
   wrapper.appendChild(container)
   document.body.appendChild(wrapper)
 
-  // 等待图片（多为 base64 内嵌）加载完成，避免空白
+  // 等待图片（多为 base64 内嵌）解码完成，避免导出空白。
+  // 用 img.decode() 精确等待解码结束；不支持时回退 load/error 事件；2s 超时兜底防止卡死。
   const imgs = Array.from(container.querySelectorAll('img')) as HTMLImageElement[]
   await Promise.all(
     imgs.map(
       (img) =>
         new Promise<void>((resolve) => {
-          if (img.complete) return resolve()
-          img.onload = () => resolve()
-          img.onerror = () => resolve()
-          // 超时兜底，避免跨域图片卡住
-          setTimeout(resolve, 3000)
+          let settled = false
+          const done = () => {
+            if (settled) return
+            settled = true
+            resolve()
+          }
+          if (img.complete && img.naturalWidth > 0) return done()
+          img.addEventListener('load', done, { once: true })
+          img.addEventListener('error', done, { once: true })
+          if (typeof img.decode === 'function') {
+            img.decode().then(done).catch(() => {
+              /* 解码失败（如非法 src）交给上面的 load/error 兜底 */
+            })
+          }
+          setTimeout(done, 2000)
         }),
     ),
   )

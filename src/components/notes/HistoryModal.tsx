@@ -22,7 +22,7 @@ const C = {
 } as const
 
 export default function HistoryModal({ onRestore }: { onRestore?: (noteId: string, content: string, title: string, filePath?: string) => void }) {
-  const { showHistory, setShowHistory, history, selectedNoteId, restoreFromHistory, deleteHistoryEntry, settings, updateHistoryContent } = useAppStore()
+  const { showHistory, setShowHistory, history, selectedNoteId, restoreFromHistory, deleteHistoryEntry, settings, updateHistoryContent, showToast } = useAppStore()
   const [previewHistory, setPreviewHistory] = useState<any | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
 
@@ -59,7 +59,10 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
   const handleRestore = async (historyId: string) => {
     try {
       const entry = noteHistory.find((h) => h.id === historyId)
-      if (!entry) return
+      if (!entry) {
+        showToast('恢复失败：找不到该历史版本', 'error')
+        return
+      }
 
       // git 备份模式：从对应 commit 读取真实文件内容（本地与 Gitee 镜像一致）
       let content = entry.content
@@ -72,15 +75,22 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
         }
       }
 
+      // 内容仍为空 → 直接中止并提示，避免用空内容覆盖现有笔记
+      if (!content || !content.trim()) {
+        showToast('恢复失败：该历史版本内容为空（可能已被清理）', 'error')
+        return
+      }
+
       restoreFromHistory(historyId)
       setPreviewHistory(null)
       setShowHistory(false)
       // Notify parent so it can handle local file writes
-      if (onRestore && entry) {
-        onRestore(entry.noteId, content || entry.content || '', entry.title, (entry as any).filePath)
+      if (onRestore) {
+        onRestore(entry.noteId, content, entry.title, (entry as any).filePath)
       }
     } catch (err) {
       console.error('[HistoryModal] handleRestore failed:', err)
+      showToast(`恢复失败：${err instanceof Error ? err.message : String(err)}`, 'error')
     }
   }
 

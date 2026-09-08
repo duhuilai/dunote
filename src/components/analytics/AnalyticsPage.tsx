@@ -2,9 +2,17 @@ import { useState } from 'react'
 import { useAppStore } from '@/store'
 import { Users, CheckSquare, Clock, TrendingUp, Download, Filter } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeFile } from '@tauri-apps/plugin-fs'
+
+/** CSV 字段转义：含逗号/引号/换行时用双引号包裹，内部引号加倍 */
+function csvCell(v: unknown): string {
+  const s = String(v ?? '')
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
 
 export default function AnalyticsPage() {
-  const { personnel, tasks } = useAppStore()
+  const { personnel, tasks, showToast } = useAppStore()
   const [filterPerson, setFilterPerson] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
 
@@ -38,21 +46,30 @@ export default function AnalyticsPage() {
     return true
   })
 
-  const handleExport = () => {
-    // Simple CSV export as demo
-    const headers = ['姓名', '职位', '总任务', '已完成', '进行中']
-    const rows = filteredPersonnel.map((p) => {
-      const pt = tasks.filter((t) => t.responsiblePerson === p.name || t.participants.includes(p.name))
-      return [p.name, p.position, pt.length, pt.filter((t) => t.status === 'completed').length, pt.filter((t) => t.status === 'running').length]
-    })
-    const csv = [headers, ...rows].map((r) => r.join(',')).join('\n')
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'duNote_分析统计.csv'
-    a.click()
-    URL.revokeObjectURL(url)
+  const handleExport = async () => {
+    try {
+      const headers = ['姓名', '职位', '总任务', '已完成', '进行中']
+      const rows = filteredPersonnel.map((p) => {
+        const pt = tasks.filter((t) => t.responsiblePerson === p.name || t.participants.includes(p.name))
+        return [p.name, p.position, pt.length, pt.filter((t) => t.status === 'completed').length, pt.filter((t) => t.status === 'running').length]
+      })
+      const csv = [headers, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')
+      // 走 Tauri 原生保存对话框 + fs 写盘：
+      // 之前用 <a download> + blob URL，在 WebView 内不一定能真正落盘（无下载目录权限时静默失败）。
+      const filePath = await save({
+        title: '导出统计',
+        filters: [{ name: 'CSV 表格', extensions: ['csv'] }],
+        defaultPath: 'duNote_分析统计.csv',
+      })
+      if (!filePath) return // 用户取消
+      // BOM 保证 Excel 正确识别 UTF-8 中文
+      const bytes = new TextEncoder().encode('\uFEFF' + csv)
+      await writeFile(filePath, bytes)
+      showToast(`已导出到 ${filePath}`, 'success')
+    } catch (err) {
+      console.error('[Analytics] 导出 CSV 失败:', err)
+      showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
   }
 
   return (

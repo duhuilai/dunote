@@ -5,6 +5,22 @@ import { initialUpdateDownload } from '@/utils/update';
 import { defaultSettings, loadSettings, saveSettings } from '@/utils/settingsStorage';
 import { savePersonnel, saveTasks } from '@/utils/storage';
 
+/**
+ * 生成唯一 id。优先 crypto.randomUUID（安全上下文可用），
+ * 否则回退到「时间戳 + 随机数」，保证同一毫秒内多次调用也不重复。
+ */
+function randomId(): string {
+  const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } }
+  if (typeof g.crypto?.randomUUID === 'function') {
+    try {
+      return g.crypto.randomUUID()
+    } catch {
+      /* 某些环境下 randomUUID 存在但不可用，继续走回退 */
+    }
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 interface AppState {
   // Navigation
   currentPage: PageKey;
@@ -117,7 +133,9 @@ export const useAppStore = create<AppState>((set) => ({
   addHistoryEntry: (entry: Omit<NoteHistory, 'id' | 'timestamp'>) => set((s) => ({
     history: [{
       ...entry,
-      id: `h-${Date.now()}`,
+      // 同一毫秒内连续保存会产生重复 id（h-${Date.now()}），导致历史列表渲染/恢复错位。
+      // 优先用 randomUUID；非安全上下文下回退到时间戳 + 随机串。
+      id: `h-${randomId()}`,
       timestamp: new Date().toISOString(),
     }, ...s.history],
   })),
