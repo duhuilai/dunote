@@ -168,6 +168,9 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
   // 记录“编辑器已经加载并（对本地文件）从磁盘读取过的最新笔记 id”。
   // 用于区分“首次/切换进入”与“同一篇的外部变更”：前者以磁盘为权威重新读取，后者仅外部变更才重载，避免光标跳动。
   const loadedNoteIdRef = useRef<string | null>(null)
+  // 加载/切换进行中的标志：本地文件笔记读取磁盘是异步的，期间编辑器仍显示旧内容但新笔记 meta 尚未生效。
+  // 置位期间禁用编辑 + 让 onUpdate 排程的落盘失效，避免用户在卡顿间隙的输入被误落到旧笔记 / 以新笔记 meta 覆盖。
+  const loadingRef = useRef(false)
   // 记录已处理过的 reloadToken，用于检测“恢复历史”等外部强制重载信号
   const reloadTokenRef = useRef<number>(reloadToken)
   // 让 useEditor 配置闭包里也能拿到最新的 onLocalPersist（避免闭包捕获初始值）
@@ -447,6 +450,9 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
       },
     },
     onUpdate: ({ editor }) => {
+      // 切换/加载进行中：旧笔记已由 flushPending 捕获落盘，新笔记内容尚未加载，
+      // 此阶段的 onUpdate 是“卡顿间隙的误输入”，不应排程落盘（否则可能以新笔记 meta 覆盖旧笔记内容）。
+      if (loadingRef.current) return
       // Debounced auto-save (1.5 seconds after last edit)
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
@@ -556,9 +562,21 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
 
     // 先标记正在为 targetId 加载，防止快速切换时重复发起 / 竞态覆盖
     loadedNoteIdRef.current = targetId
+    // 加载期间锁定编辑：本地文件笔记读取磁盘是异步的，在 setContent 生效前编辑器仍显示旧内容，
+    // 若用户在此期间输入会被误落到旧笔记。置 loadingRef 让 onUpdate 不再排程落盘，
+    // 并 setEditable(false) 直接吞掉这段间隙的键盘输入，彻底杜绝跨笔记覆盖。
+    loadingRef.current = true
+    try {
+      editor.setEditable(false)
+    } catch {
+      /* 编辑器尚未就绪，忽略 */
+    }
     loadContent().then((content) => {
       // 期间又切走了，放弃本次加载，避免把旧内容覆盖到新笔记
-      if (editor.isDestroyed || loadedNoteIdRef.current !== targetId) return
+      if (editor.isDestroyed || loadedNoteIdRef.current !== targetId) {
+        loadingRef.current = false
+        return
+      }
       baselineContentRef.current = content
       lastEmittedRef.current = content
       try {
@@ -568,6 +586,13 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
         editor.commands.setContent('<p></p>')
       }
       editorMetaRef.current = { noteId: targetId, isLocal, path }
+      loadingRef.current = false
+      // 内容已就位，恢复可编辑
+      try {
+        if (!editor.isDestroyed) editor.setEditable(true)
+      } catch {
+        /* 忽略 */
+      }
     })
   }, [editor, note.id, reloadToken])
 
