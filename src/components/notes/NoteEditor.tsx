@@ -203,8 +203,10 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     if (composingTimerRef.current) clearTimeout(composingTimerRef.current)
     composingTimerRef.current = window.setTimeout(() => {
       composingRef.current = false
-      // 不重置 lastComposeTsRef，扩展宽限期用它判断
-      // ImeGuard 端以 lastTs+EXT_GRACE_MS 判定，这里不需要显式 end()
+      // 必须同步结束 ImeGuard 的合成态：否则 imeGrace.composing 永久为 true，
+      // filterTransaction 会长期拦截（表现为表格插入行/列失效、单元格内回车失效）。
+      // end() 会把 lastTs 续到此刻，扩展宽限期据此再保留 IME_EXTENDED_GRACE_MS。
+      imeGrace.end()
     }, IME_GRACE_MS)
   }
 

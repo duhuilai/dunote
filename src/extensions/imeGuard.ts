@@ -29,9 +29,13 @@ export const imeGrace = {
   lastTs: 0,
   /** 是否处于宽限窗口（含扩展） */
   isInGrace(): boolean {
-    if (this.composing) return true
     if (this.lastTs <= 0) return false
-    return Date.now() - this.lastTs < IME_EXTENDED_GRACE_MS
+    const dt = Date.now() - this.lastTs
+    // 无论 composing 是否为真，一律以 lastTs 为基准限时收敛。
+    // 原因：composing 置 false 依赖外部调用 end()，若调用方漏调（或组件卸载/时序异常），
+    // 仅凭 composing 判定会让守卫永久生效，导致插入行/列等正常操作被长期吞掉。
+    if (this.composing) return dt < IME_GRACE_MS
+    return dt < IME_EXTENDED_GRACE_MS
   },
   /** 标记合成中 / 续期时间戳 */
   arm(): void {
@@ -45,28 +49,42 @@ export const imeGrace = {
   },
 }
 
-/** 统计表格单元格内的段落数量（仅 table > row > cell > paragraph 这一路径） */
-function countCellParagraphs(doc: import('@tiptap/pm/model').Node): number {
-  let n = 0
+/** 统计表格单元格数量与单元格内段落数量（仅 table > row > cell > paragraph 这一路径） */
+function countCellsAndParagraphs(
+  doc: import('@tiptap/pm/model').Node,
+): { cells: number; paras: number } {
+  let cells = 0
+  let paras = 0
   doc.descendants((node) => {
     if (node.type.name === 'tableCell' || node.type.name === 'tableHeader') {
+      cells++
       node.descendants((inner) => {
-        if (inner.isTextblock) n++
+        if (inner.isTextblock) paras++
         return true
       })
       return false // 不再深入 cell
     }
     return true
   })
-  return n
+  return { cells, paras }
 }
 
-/** 检测 transaction 是否在单元格内新增了段落（IME 提交常见 split 模式） */
+/**
+ * 检测 transaction 是否为「IME 提交导致的单元格内 splitBlock」。
+ *
+ * 关键约束：必须与**结构性编辑**（插入/删除行或列）区分开。插入行、插入列同样会
+ * 让单元格内段落总数增加，但那是用户主动触发的结构变更，绝不能被守卫吞掉；
+ * 而 IME 的 splitBlock 是在既有单元格内拆出段落，单元格数量不变。
+ * 因此判据为：单元格数量发生变化 ⇒ 结构性编辑，一律放行。
+ */
 function isCellParagraphSplit(
   oldDoc: import('@tiptap/pm/model').Node,
   newDoc: import('@tiptap/pm/model').Node,
 ): boolean {
-  return countCellParagraphs(newDoc) > countCellParagraphs(oldDoc)
+  const a = countCellsAndParagraphs(oldDoc)
+  const b = countCellsAndParagraphs(newDoc)
+  if (b.cells !== a.cells) return false
+  return b.paras > a.paras
 }
 
 export const ImeGuard = Extension.create({
