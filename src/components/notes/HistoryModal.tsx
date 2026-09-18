@@ -81,6 +81,49 @@ export default function HistoryModal({
     }
   }, [updateHistoryContent])
 
+  /* ─── 本地保存快照：预览 / 恢复 / 删除 ─── */
+  // ⚠️ 这三个 useCallback 必须放在 early return 之前：弹窗关闭时组件仍会渲染，
+  // 若 Hook 在 `if (!showHistory) return null` 之后调用，弹窗从关到开会改变 Hook 数量，
+  // 触发 React error #310（Rendered more hooks than during the previous render）导致整页白屏。
+  const handlePreviewSnapshot = useCallback(async (meta: SnapshotMeta) => {
+    if (!selectedNoteId) return
+    try {
+      setPreviewLoading(true)
+      const content = await readSnapshot(selectedNoteId, meta.ts)
+      setPreviewHistory({ id: `snap-${meta.ts}`, title: meta.title || '本地保存版本', content, timestamp: new Date(meta.ts).toISOString() })
+    } catch (err) {
+      console.error('[HistoryModal] 读取快照失败:', err)
+      showToast('读取该保存版本失败', 'error')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }, [selectedNoteId, showToast])
+
+  const handleRestoreSnapshot = useCallback(async (meta: SnapshotMeta) => {
+    if (!selectedNoteId) return
+    try {
+      const content = await readSnapshot(selectedNoteId, meta.ts)
+      if (!content || !content.trim()) {
+        showToast('恢复失败：该保存版本内容为空', 'error')
+        return
+      }
+      setPreviewHistory(null)
+      setShowHistory(false)
+      // 复用与历史版本相同的恢复回调（内部区分普通笔记 / 本地文件笔记并刷新编辑器）
+      if (onRestore) onRestore(selectedNoteId, content, meta.title || '', undefined)
+    } catch (err) {
+      console.error('[HistoryModal] 恢复快照失败:', err)
+      showToast(`恢复失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
+  }, [selectedNoteId, onRestore, setShowHistory, showToast])
+
+  const handleDeleteSnapshot = useCallback(async (ts: number) => {
+    if (!selectedNoteId) return
+    await deleteSnapshot(selectedNoteId, ts)
+    setSnapshots((prev) => prev.filter((s) => s.ts !== ts))
+    if (previewHistory?.id === `snap-${ts}`) setPreviewHistory(null)
+  }, [selectedNoteId, previewHistory])
+
   if (!showHistory) return null
 
   const noteHistory = history.filter((h) => h.noteId === selectedNoteId)
@@ -129,46 +172,6 @@ export default function HistoryModal({
       setPreviewHistory(null)
     }
   }
-
-  /* ─── 本地保存快照：预览 / 恢复 / 删除 ─── */
-  const handlePreviewSnapshot = useCallback(async (meta: SnapshotMeta) => {
-    if (!selectedNoteId) return
-    try {
-      setPreviewLoading(true)
-      const content = await readSnapshot(selectedNoteId, meta.ts)
-      setPreviewHistory({ id: `snap-${meta.ts}`, title: meta.title || '本地保存版本', content, timestamp: new Date(meta.ts).toISOString() })
-    } catch (err) {
-      console.error('[HistoryModal] 读取快照失败:', err)
-      showToast('读取该保存版本失败', 'error')
-    } finally {
-      setPreviewLoading(false)
-    }
-  }, [selectedNoteId, showToast])
-
-  const handleRestoreSnapshot = useCallback(async (meta: SnapshotMeta) => {
-    if (!selectedNoteId) return
-    try {
-      const content = await readSnapshot(selectedNoteId, meta.ts)
-      if (!content || !content.trim()) {
-        showToast('恢复失败：该保存版本内容为空', 'error')
-        return
-      }
-      setPreviewHistory(null)
-      setShowHistory(false)
-      // 复用与历史版本相同的恢复回调（内部区分普通笔记 / 本地文件笔记并刷新编辑器）
-      if (onRestore) onRestore(selectedNoteId, content, meta.title || '', undefined)
-    } catch (err) {
-      console.error('[HistoryModal] 恢复快照失败:', err)
-      showToast(`恢复失败：${err instanceof Error ? err.message : String(err)}`, 'error')
-    }
-  }, [selectedNoteId, onRestore, setShowHistory, showToast])
-
-  const handleDeleteSnapshot = useCallback(async (ts: number) => {
-    if (!selectedNoteId) return
-    await deleteSnapshot(selectedNoteId, ts)
-    setSnapshots((prev) => prev.filter((s) => s.ts !== ts))
-    if (previewHistory?.id === `snap-${ts}`) setPreviewHistory(null)
-  }, [selectedNoteId, previewHistory])
 
   return (
     <div
