@@ -284,7 +284,7 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
               ) : snapshots.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '32px 0', color: C.textMuted, fontSize: '14px' }}>
                   暂无本地保存版本
-                  <div style={{ fontSize: '12px', marginTop: '6px' }}>每次自动保存会留档，可在此找回</div>
+                  <div style={{ fontSize: '12px', marginTop: '6px' }}>本地文件笔记在每次自动保存成功后会自动留档</div>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>

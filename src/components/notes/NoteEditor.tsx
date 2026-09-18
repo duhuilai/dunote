@@ -482,18 +482,22 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
 
   // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、防抖 1.5s 未触发的图片）写入 editorMetaRef 所指的笔记。
   // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失。
-  const persistContent = useCallback((content: string) => {
+  const persistContent = useCallback((content: string, opts?: { force?: boolean }) => {
     const meta = editorMetaRef.current
     // 普通笔记：更新内存 store（本地文件笔记不在 store.notes 中，updateNote 为 no-op）
     updateNote(meta.noteId, { content })
-    // 每次落盘都留一份本地快照，供数据出错后按修改记录找回（失败不影响主流程）
-    void saveSnapshot(meta.noteId, titleRef.current || '未命名', content)
     // 本地文件笔记：写磁盘 + 同步内存 localNotes
     if (meta.isLocal && meta.path) {
       // 内容为空时不写盘，避免把有内容的文件清空成空白（导致重开后整篇丢失）
       if (content.trim()) {
         writeTextFile(meta.path, content)
-          .then(() => console.log(`[Tauri] Wrote to file: ${meta.path}`))
+          .then(() => {
+            console.log(`[Tauri] Wrote to file: ${meta.path}`)
+            // 仅在「文件真正写入成功后」才生成本地保存版本：
+            // 写盘失败 / 被空内容拦截时都不留档，避免产生与磁盘实际内容不符的假版本。
+            // force（切换笔记、关闭前）绕过节流，保证关键节点一定有档可循。
+            void saveSnapshot(meta.noteId, titleRef.current || '未命名', content, opts)
+          })
           .catch((e) => console.error(`[Tauri] Failed to write to file: ${meta.path}`, e))
         // 同步内存里的 localNotes，避免切回时读到旧内容
         onLocalPersistRef.current?.(meta.noteId, content)
@@ -517,7 +521,8 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
       return
     }
     if (content === baselineContentRef.current) return
-    persistContent(content)
+    // 切换笔记 / 卸载前的落盘属于关键节点，强制留档（绕过快照节流）
+    persistContent(content, { force: true })
     baselineContentRef.current = content
   }, [persistContent])
 
