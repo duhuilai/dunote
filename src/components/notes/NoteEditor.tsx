@@ -24,6 +24,7 @@ import { confirm } from '@tauri-apps/plugin-dialog'
 import { showPrompt } from '@/utils/prompt'
 import { pickImageFile } from '@/utils/imageEmbed'
 import { saveNoteTitle, toRelPath } from '@/utils/noteMeta'
+import { saveSnapshot } from '@/utils/noteSnapshots'
 import type { Note } from '@/types'
 
 /* ─── 将图片文件转为 dataURL（base64），用于把粘贴/拖入的图片内嵌进笔记，避免 blob: 临时地址丢失 ─── */
@@ -147,6 +148,9 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
   const { updateNote, setShowHistory, setHistory, settings, showToast, localRootFolder, setSelectedNoteId } = useAppStore()
   // 标题受控：与 note.title 同步，但允许本地临时编辑态（输入中文时如果直接绑 note.title，每次输入都会触发 store 更新，可能干扰 IME/光标）
   const [titleDraft, setTitleDraft] = useState<string>(note.title || '')
+  // 供 persistContent（useCallback，闭包会过期）读取最新标题写入快照
+  const titleRef = useRef<string>(note.title || '')
+  useEffect(() => { titleRef.current = titleDraft || note.title || '' }, [titleDraft, note.title])
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [exportTarget, setExportTarget] = useState<{ format: ExportFormat; title: string; html: string } | null>(null)
   const [isCreatingHistory, setIsCreatingHistory] = useState(false)
@@ -482,6 +486,8 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     const meta = editorMetaRef.current
     // 普通笔记：更新内存 store（本地文件笔记不在 store.notes 中，updateNote 为 no-op）
     updateNote(meta.noteId, { content })
+    // 每次落盘都留一份本地快照，供数据出错后按修改记录找回（失败不影响主流程）
+    void saveSnapshot(meta.noteId, titleRef.current || '未命名', content)
     // 本地文件笔记：写磁盘 + 同步内存 localNotes
     if (meta.isLocal && meta.path) {
       // 内容为空时不写盘，避免把有内容的文件清空成空白（导致重开后整篇丢失）
@@ -550,16 +556,20 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     // 普通笔记：内存即为准。
     // 依赖加入 editor：编辑器首次挂载时 editor 可能为 null，若 effect 提前 return 且依赖不变就再也不会读盘，
     // 导致软件重启后打开本地笔记显示的是陈旧内存内容（磁盘里其实已有图片）。
-    const loadContent = async (): Promise<string> => {
+    // ok=false 表示「本地文件读取失败」：此时绝不能把回退内容（很可能是空字符串）
+    // 灌进编辑器、更不能把 meta 指向新笔记——否则编辑器里残留的上一篇内容会被当成
+    // 这篇笔记的内容写盘，正是「切换的笔记被上一个笔记数据覆盖」的成因之一。
+    const loadContent = async (): Promise<{ content: string; ok: boolean }> => {
       if (isLocal && path) {
         try {
-          const disk = await readTextFile(path)
-          if (disk && disk.trim()) return disk
+          // 读取成功即以磁盘为权威（文件本身为空也是合法状态）
+          return { content: await readTextFile(path), ok: true }
         } catch (e) {
-          console.warn('[NoteEditor] 读取本地文件失败，回退到内存内容:', e)
+          console.warn('[NoteEditor] 读取本地文件失败:', e)
+          return { content: note.content || '', ok: false }
         }
       }
-      return note.content || ''
+      return { content: note.content || '', ok: true }
     }
 
     // 先标记正在为 targetId 加载，防止快速切换时重复发起 / 竞态覆盖
@@ -573,10 +583,23 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     } catch {
       /* 编辑器尚未就绪，忽略 */
     }
-    loadContent().then((content) => {
+    loadContent().then(({ content, ok }) => {
       // 期间又切走了，放弃本次加载，避免把旧内容覆盖到新笔记
       if (editor.isDestroyed || loadedNoteIdRef.current !== targetId) {
         loadingRef.current = false
+        return
+      }
+      // 本地文件读取失败：保持编辑器现状（仍归属上一篇笔记），不 setContent、
+      // 不把 meta 指向新笔记，避免残留内容被当成新笔记内容写盘。退出加载态并提示。
+      if (!ok) {
+        loadingRef.current = false
+        try {
+          if (!editor.isDestroyed) editor.setEditable(true)
+        } catch {
+          /* 忽略 */
+        }
+        console.warn('[NoteEditor] 放弃加载：本地文件读取失败，保持当前内容不变')
+        showToast?.('读取该笔记失败（可能无访问权限），已保持原内容不变', 'error')
         return
       }
       baselineContentRef.current = content

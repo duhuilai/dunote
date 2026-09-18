@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useAppStore } from '@/store'
 import { readVersion } from '@/utils/gitBackup'
 import { renderDataTablesInHTML } from '@/utils/dataTablePreview'
-import { X, Clock, RotateCcw, Trash2, Eye, Loader2 } from 'lucide-react'
+import { listSnapshots, readSnapshot, deleteSnapshot, type SnapshotMeta } from '@/utils/noteSnapshots'
+import { X, Clock, RotateCcw, Trash2, Eye, Loader2, Save } from 'lucide-react'
 
 /* ─── Color Tokens ─── */
 const C = {
@@ -25,6 +26,22 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
   const { showHistory, setShowHistory, history, selectedNoteId, restoreFromHistory, deleteHistoryEntry, settings, updateHistoryContent, showToast } = useAppStore()
   const [previewHistory, setPreviewHistory] = useState<any | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  /** 'history'=git/内存历史；'snapshots'=本地保存快照（每次落盘留档，用于数据出错后找回） */
+  const [tab, setTab] = useState<'history' | 'snapshots'>('history')
+  const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([])
+  const [snapLoading, setSnapLoading] = useState(false)
+
+  // 切到「本地保存版本」页签时加载该笔记的快照列表
+  useEffect(() => {
+    if (!showHistory || tab !== 'snapshots' || !selectedNoteId) return
+    let alive = true
+    setSnapLoading(true)
+    listSnapshots(selectedNoteId)
+      .then((list) => { if (alive) setSnapshots(list) })
+      .catch(() => { if (alive) setSnapshots([]) })
+      .finally(() => { if (alive) setSnapLoading(false) })
+    return () => { alive = false }
+  }, [showHistory, tab, selectedNoteId])
 
   // 预览时也要从 git 读取真实内容（git 备份模式下 history.content 可能为空）
   // ⚠️ 必须在 early return 之前调用，否则违反 Hooks 规则（React error #310）
@@ -101,6 +118,46 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
     }
   }
 
+  /* ─── 本地保存快照：预览 / 恢复 / 删除 ─── */
+  const handlePreviewSnapshot = useCallback(async (meta: SnapshotMeta) => {
+    if (!selectedNoteId) return
+    try {
+      setPreviewLoading(true)
+      const content = await readSnapshot(selectedNoteId, meta.ts)
+      setPreviewHistory({ id: `snap-${meta.ts}`, title: meta.title || '本地保存版本', content, timestamp: new Date(meta.ts).toISOString() })
+    } catch (err) {
+      console.error('[HistoryModal] 读取快照失败:', err)
+      showToast('读取该保存版本失败', 'error')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }, [selectedNoteId, showToast])
+
+  const handleRestoreSnapshot = useCallback(async (meta: SnapshotMeta) => {
+    if (!selectedNoteId) return
+    try {
+      const content = await readSnapshot(selectedNoteId, meta.ts)
+      if (!content || !content.trim()) {
+        showToast('恢复失败：该保存版本内容为空', 'error')
+        return
+      }
+      setPreviewHistory(null)
+      setShowHistory(false)
+      // 复用与历史版本相同的恢复回调（内部区分普通笔记 / 本地文件笔记并刷新编辑器）
+      if (onRestore) onRestore(selectedNoteId, content, meta.title || '', undefined)
+    } catch (err) {
+      console.error('[HistoryModal] 恢复快照失败:', err)
+      showToast(`恢复失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
+  }, [selectedNoteId, onRestore, setShowHistory, showToast])
+
+  const handleDeleteSnapshot = useCallback(async (ts: number) => {
+    if (!selectedNoteId) return
+    await deleteSnapshot(selectedNoteId, ts)
+    setSnapshots((prev) => prev.filter((s) => s.ts !== ts))
+    if (previewHistory?.id === `snap-${ts}`) setPreviewHistory(null)
+  }, [selectedNoteId, previewHistory])
+
   return (
     <div
       style={{
@@ -166,9 +223,35 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
                   margin: 0,
                 }}
               >
-                历史记录
+                {tab === 'snapshots' ? '本地保存版本' : '历史记录'}
               </h3>
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ display: 'flex', background: C.bg, borderRadius: '8px', padding: '2px', border: `1px solid ${C.border}` }}>
+                {([
+                  { key: 'history' as const, label: '历史记录' },
+                  { key: 'snapshots' as const, label: '本地保存版本' },
+                ]).map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => { setTab(t.key); setPreviewHistory(null) }}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      background: tab === t.key ? C.surface : 'transparent',
+                      color: tab === t.key ? C.primary : C.textMuted,
+                      fontSize: '12px',
+                      fontWeight: tab === t.key ? 600 : 500,
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      boxShadow: tab === t.key ? '0 1px 2px rgba(15,23,42,0.08)' : 'none',
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
             <button
               onClick={() => { setShowHistory(false); setPreviewHistory(null) }}
               style={{
@@ -187,11 +270,84 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
             >
               <X size={18} style={{ color: C.textMuted }} />
             </button>
+            </div>
           </div>
 
           {/* Content */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
-            {noteHistory.length === 0 ? (
+            {tab === 'snapshots' ? (
+              snapLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 0', color: C.textMuted, gap: '8px' }}>
+                  <Loader2 size={16} className="spin" />
+                  <span style={{ fontSize: '13px' }}>加载中…</span>
+                </div>
+              ) : snapshots.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '32px 0', color: C.textMuted, fontSize: '14px' }}>
+                  暂无本地保存版本
+                  <div style={{ fontSize: '12px', marginTop: '6px' }}>每次自动保存会留档，可在此找回</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {snapshots.map((s) => (
+                    <div
+                      key={s.ts}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px',
+                        borderRadius: '12px',
+                        background: previewHistory?.id === `snap-${s.ts}` ? C.primaryLight : C.bg,
+                        border: `1px solid ${previewHistory?.id === `snap-${s.ts}` ? C.primary : C.border}`,
+                      }}
+                    >
+                      <div style={{
+                        width: '32px', height: '32px', borderRadius: '50%',
+                        background: 'rgba(16,185,129,0.12)', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: '2px',
+                      }}>
+                        <Save size={14} style={{ color: C.success }} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '13px', fontWeight: 500, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {s.title || '本地保存版本'}
+                          </span>
+                          <span style={{ fontSize: '11px', color: C.textMuted, flexShrink: 0, marginLeft: '8px' }}>
+                            {new Date(s.ts).toLocaleString('zh-CN')}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '12px', color: C.textSecondary, marginBottom: '8px' }}>
+                          自动保存留档 · {(s.bytes / 1024).toFixed(1)} KB
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button onClick={() => handlePreviewSnapshot(s)} style={{
+                            display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px',
+                            borderRadius: '8px',
+                            background: previewHistory?.id === `snap-${s.ts}` ? C.primary : '#F1F5F9',
+                            color: previewHistory?.id === `snap-${s.ts}` ? '#FFFFFF' : C.textSecondary,
+                            fontSize: '12px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                          }}>
+                            <Eye size={12} />预览
+                          </button>
+                          <button onClick={() => handleRestoreSnapshot(s)} style={{
+                            display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px',
+                            borderRadius: '8px', background: C.primaryLight, color: C.primary,
+                            fontSize: '12px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                          }}>
+                            <RotateCcw size={12} />恢复此版本
+                          </button>
+                          <button onClick={() => handleDeleteSnapshot(s.ts)} style={{
+                            display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px',
+                            borderRadius: '8px', background: 'rgba(239,68,68,0.08)', color: C.danger,
+                            fontSize: '12px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                          }}>
+                            <Trash2 size={12} />删除
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : noteHistory.length === 0 ? (
               <div
                 style={{
                   textAlign: 'center',
