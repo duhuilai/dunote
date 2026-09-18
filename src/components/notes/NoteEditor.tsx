@@ -97,7 +97,7 @@ import {
   Heading1, Heading2, Heading3, Heading4, Heading5, Heading6,
   List, ListOrdered, Quote, Code, CodeSquare,
   Link2, Image as ImageIcon, Highlighter, Palette, ChevronDown,
-  Undo, Redo, Minus, Download, FileText, FileCode, FileType, Clock,
+  Undo, Redo, Minus, Download, FileText, FileCode, FileType, Clock, History,
   AlignLeft, AlignCenter, AlignRight, Plus, Trash2, Table as TableIcon, X, Search,
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight
 } from 'lucide-react'
@@ -142,9 +142,11 @@ interface NoteEditorProps {
   onLocalTitlePersist?: (noteId: string, title: string) => void
   /** 外部强制重载信号：恢复历史后 +1，让当前笔记（note.id 不变）重新从磁盘/内存加载最新内容 */
   reloadToken?: number
+  /** 打开历史弹窗时指定默认页签：'snapshots' = 本地实时保存版本 */
+  onOpenHistoryTab?: (tab: 'history' | 'snapshots') => void
 }
 
-export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, reloadToken = 0 }: NoteEditorProps) {
+export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, reloadToken = 0, onOpenHistoryTab }: NoteEditorProps) {
   const { updateNote, setShowHistory, setHistory, settings, showToast, localRootFolder, setSelectedNoteId } = useAppStore()
   // 标题受控：与 note.title 同步，但允许本地临时编辑态（输入中文时如果直接绑 note.title，每次输入都会触发 store 更新，可能干扰 IME/光标）
   const [titleDraft, setTitleDraft] = useState<string>(note.title || '')
@@ -180,6 +182,8 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
   // 让 useEditor 配置闭包里也能拿到最新的 onLocalPersist（避免闭包捕获初始值）
   const onLocalPersistRef = useRef(onLocalPersist)
   onLocalPersistRef.current = onLocalPersist
+  const onOpenHistoryTabRef = useRef(onOpenHistoryTab)
+  onOpenHistoryTabRef.current = onOpenHistoryTab
   // 标题落盘去抖：避免连续输入时把整个 meta 文件重写 N 次
   const titleCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 最近一次提交到磁盘/store 的标题（用于跳过未变更的写入）
@@ -482,7 +486,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
 
   // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、防抖 1.5s 未触发的图片）写入 editorMetaRef 所指的笔记。
   // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失。
-  const persistContent = useCallback((content: string, opts?: { force?: boolean }) => {
+  const persistContent = useCallback((content: string) => {
     const meta = editorMetaRef.current
     // 普通笔记：更新内存 store（本地文件笔记不在 store.notes 中，updateNote 为 no-op）
     updateNote(meta.noteId, { content })
@@ -493,10 +497,9 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
         writeTextFile(meta.path, content)
           .then(() => {
             console.log(`[Tauri] Wrote to file: ${meta.path}`)
-            // 仅在「文件真正写入成功后」才生成本地保存版本：
+            // 仅在「文件真正写入成功后」才生成实时保存版本：
             // 写盘失败 / 被空内容拦截时都不留档，避免产生与磁盘实际内容不符的假版本。
-            // force（切换笔记、关闭前）绕过节流，保证关键节点一定有档可循。
-            void saveSnapshot(meta.noteId, titleRef.current || '未命名', content, opts)
+            void saveSnapshot(meta.noteId, titleRef.current || '未命名', content)
           })
           .catch((e) => console.error(`[Tauri] Failed to write to file: ${meta.path}`, e))
         // 同步内存里的 localNotes，避免切回时读到旧内容
@@ -521,8 +524,8 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
       return
     }
     if (content === baselineContentRef.current) return
-    // 切换笔记 / 卸载前的落盘属于关键节点，强制留档（绕过快照节流）
-    persistContent(content, { force: true })
+    // 切换笔记 / 卸载前的落盘，同样会触发实时保存版本留档
+    persistContent(content)
     baselineContentRef.current = content
   }, [persistContent])
 
@@ -847,8 +850,16 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     }
   }
 
+  // 打开「实时保存版本」：直接落在本地实时保存版本页签，可从任意一次自动保存找回
+  const handleOpenRealtimeHistory = () => {
+    setSelectedNoteId(note.id)
+    onOpenHistoryTabRef.current?.('snapshots')
+    setShowHistory(true)
+  }
+
   // 打开历史面板：从 git log 取版本（Gitee 模式先拉取远程最新）
   const handleOpenHistory = async () => {
+    onOpenHistoryTabRef.current?.('history')
     try {
       setSelectedNoteId(note.id)
       const target = resolveBackupTarget()
@@ -2652,6 +2663,35 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
           >
             <Clock size={14} />
             <span>{isCreatingHistory ? '生成中…' : '生成历史'}</span>
+          </button>
+
+          <button
+            onClick={handleOpenRealtimeHistory}
+            title="按每次自动保存留档的版本找回内容"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '8px',
+              border: `1px solid ${C.primary}`,
+              background: C.primaryLight,
+              color: C.primary,
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(37,99,235,0.2)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = C.primaryLight
+            }}
+          >
+            <History size={14} />
+            <span>实时历史恢复</span>
           </button>
 
           <button

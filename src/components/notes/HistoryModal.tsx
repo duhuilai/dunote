@@ -22,7 +22,14 @@ const C = {
   surface: '#FFFFFF',
 } as const
 
-export default function HistoryModal({ onRestore }: { onRestore?: (noteId: string, content: string, title: string, filePath?: string) => void }) {
+export default function HistoryModal({
+  onRestore,
+  initialTab = 'history',
+}: {
+  onRestore?: (noteId: string, content: string, title: string, filePath?: string) => void
+  /** 打开时默认落在哪个页签：'snapshots' = 本地实时保存版本 */
+  initialTab?: 'history' | 'snapshots'
+}) {
   const { showHistory, setShowHistory, history, selectedNoteId, restoreFromHistory, deleteHistoryEntry, settings, updateHistoryContent, showToast } = useAppStore()
   const [previewHistory, setPreviewHistory] = useState<any | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -30,6 +37,11 @@ export default function HistoryModal({ onRestore }: { onRestore?: (noteId: strin
   const [tab, setTab] = useState<'history' | 'snapshots'>('history')
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([])
   const [snapLoading, setSnapLoading] = useState(false)
+
+  // 每次打开弹窗时回到调用方指定的页签（「实时历史恢复」按钮会指定 snapshots）
+  useEffect(() => {
+    if (showHistory) setTab(initialTab)
+  }, [showHistory, initialTab])
 
   // 切到「本地保存版本」页签时加载该笔记的快照列表
   useEffect(() => {

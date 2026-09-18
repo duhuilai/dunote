@@ -3,6 +3,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import { useAppStore } from '@/store'
 import { loadPersonnel, loadTasks } from '@/utils/storage'
 import { checkForUpdate } from '@/utils/update'
+import { pruneAllSnapshotsOnStartup } from '@/utils/noteSnapshots'
 import Sidebar from '@/components/layout/Sidebar'
 import NotesPage from '@/components/notes/NotesPage'
 import PersonnelPage from '@/components/personnel/PersonnelPage'
@@ -39,6 +40,11 @@ function App() {
     return () => {
       cancelled = true
     }
+  }, [])
+
+  // 启动时清理过期的本地实时保存版本（始终至少保留最近 5 版）
+  useEffect(() => {
+    void pruneAllSnapshotsOnStartup()
   }, [])
 
   // 启动时获取真实版本号并自动检查更新

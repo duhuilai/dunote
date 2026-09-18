@@ -925,6 +925,8 @@ export default function NotesPage() {
   const [localNotes, setLocalNotes] = useState<import('@/types').Note[]>([])
   // 恢复历史后 +1，强制 NoteEditor 重新加载当前笔记内容（note.id 不变时也刷新）
   const [reloadToken, setReloadToken] = useState(0)
+  /** 历史弹窗打开时默认落在的页签（「实时历史恢复」按钮会指定 snapshots） */
+  const [historyInitialTab, setHistoryInitialTab] = useState<'history' | 'snapshots'>('history')
   // 上次打开的文件夹无法访问（macOS 升级后 TCC 授权失效 / 目录被移动删除）时的提示
   const [folderAccessError, setFolderAccessError] = useState<string | null>(null)
 
@@ -2025,7 +2027,7 @@ export default function NotesPage() {
         }}
       >
         {selectedNote ? (
-          <NoteEditor note={selectedNote} onLocalPersist={handleLocalNotePersist} onLocalTitlePersist={handleLocalTitlePersist} reloadToken={reloadToken} />
+          <NoteEditor note={selectedNote} onLocalPersist={handleLocalNotePersist} onLocalTitlePersist={handleLocalTitlePersist} reloadToken={reloadToken} onOpenHistoryTab={setHistoryInitialTab} />
         ) : (
           <div
             style={{
@@ -2223,7 +2225,7 @@ export default function NotesPage() {
       )}
 
       {/* History Modal */}
-      <HistoryModal onRestore={handleRestoreLocalNote} />
+      <HistoryModal onRestore={handleRestoreLocalNote} initialTab={historyInitialTab} />
 
       {/* ── New Folder Dialog ─── */}
       {showNewFolderDialog && (
