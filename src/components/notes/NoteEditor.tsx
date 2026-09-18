@@ -27,6 +27,14 @@ import { saveNoteTitle, toRelPath } from '@/utils/noteMeta'
 import { saveSnapshot } from '@/utils/noteSnapshots'
 import type { Note } from '@/types'
 
+/**
+ * 自动保存的空闲判定时长（毫秒）。
+ * 触发自动保存需同时满足「文档发生变化」，共两种情况：
+ *   1. 停止操作满本时长（每次编辑都会重置计时器，即「5 秒内没有任何操作」）；
+ *   2. 切换文档（由 switch effect 中的 flushPending 立即落盘）。
+ */
+const AUTOSAVE_IDLE_MS = 5000
+
 /* ─── 将图片文件转为 dataURL（base64），用于把粘贴/拖入的图片内嵌进笔记，避免 blob: 临时地址丢失 ─── */
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -463,7 +471,10 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
       // 切换/加载进行中：旧笔记已由 flushPending 捕获落盘，新笔记内容尚未加载，
       // 此阶段的 onUpdate 是“卡顿间隙的误输入”，不应排程落盘（否则可能以新笔记 meta 覆盖旧笔记内容）。
       if (loadingRef.current) return
-      // Debounced auto-save (1.5 seconds after last edit)
+      // 自动保存触发条件（两条，均要求「文档确实发生变化」）：
+      //   1) 停止操作满 AUTOSAVE_IDLE_MS（5 秒）；
+      //   2) 切换文档（由下方 switch effect 的 flushPending 触发）。
+      // 每次编辑都会重置计时器，因此是「5 秒内没有任何操作」才落盘，而非固定每 5 秒写一次。
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
       }
@@ -471,21 +482,21 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
         const content = editor.getHTML()
         // 记录编辑器本次产出的 HTML，供下方 effect 判断是否为自编辑（自编辑不回灌 setContent）
         lastEmittedRef.current = content
-        // Only save if content actually changed from the baseline (last loaded/saved content)
+        // 仅当内容相对基线（上次加载/保存的内容）确有变化才落盘——对应“文档发生变化”
         if (content !== baselineContentRef.current) {
           persistContent(content)
           // Update baseline after saving
           baselineContentRef.current = content
         }
-      }, 1500)
+      }, AUTOSAVE_IDLE_MS)
     },
   })
 
   // Keep editorRef in sync for use inside handleKeyDown (TipTap v3 passes (view, event), not ({editor, event}))
   editorRef.current = editor
 
-  // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、防抖 1.5s 未触发的图片）写入 editorMetaRef 所指的笔记。
-  // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失。
+  // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、5 秒空闲未触发的图片）写入 editorMetaRef 所指的笔记。
+  // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失（对应自动保存第 2 种触发：切换文档且已变化）。
   const persistContent = useCallback((content: string) => {
     const meta = editorMetaRef.current
     // 普通笔记：更新内存 store（本地文件笔记不在 store.notes 中，updateNote 为 no-op）
@@ -508,8 +519,8 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     }
   }, [updateNote])
 
-  // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、防抖 1.5s 未触发的图片）写入 editorMetaRef 所指的笔记。
-  // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失。
+  // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、5 秒空闲未触发的图片）写入 editorMetaRef 所指的笔记。
+  // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失（对应自动保存第 2 种触发：切换文档且已变化）。
   const flushPending = useCallback(() => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current)
