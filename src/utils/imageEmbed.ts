@@ -1,4 +1,6 @@
 import { showPrompt } from '@/utils/prompt'
+import { open } from '@tauri-apps/plugin-dialog'
+import { readFile } from '@tauri-apps/plugin-fs'
 
 /**
  * 把图片 URL 下载并内嵌为 base64 data URI，使图片随笔记内容一起保存，
@@ -42,9 +44,6 @@ export async function pickImageFile(): Promise<string | null> {
     if (!url) return null
     return toEmbeddedImageSrc(url)
   }
-
-  const { open } = await import('@tauri-apps/plugin-dialog')
-  const { readFile } = await import('@tauri-apps/plugin-fs')
 
   const selected = await open({
     multiple: false,

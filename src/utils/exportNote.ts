@@ -1,9 +1,8 @@
-import TurndownService from 'turndown'
-import { gfm } from 'turndown-plugin-gfm'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeFile, BaseDirectory } from '@tauri-apps/plugin-fs'
-import { buildDocx } from './exportWord'
-import html2pdf from 'html2pdf.js'
+// 注意：docx / turndown / html2pdf.js 均改为函数内动态导入。
+// 它们体积很大（合计约 1MB+ 量级）且只在用户真正导出时才需要，
+// 静态导入会让应用启动时就解析并常驻内存，拖慢启动、抬高资源占用。
 
 /**
  * Format-specific file filters for the Tauri save dialog
@@ -103,7 +102,12 @@ function normalizeTablesForExport(html: string): string {
 /**
  * Convert HTML content to Markdown string
  */
-function htmlToMarkdown(title: string, htmlContent: string): string {
+async function htmlToMarkdown(title: string, htmlContent: string): Promise<string> {
+  // 惰性加载：仅导出 Markdown 时才引入 turndown 与其 gfm 插件
+  const [{ default: TurndownService }, { gfm }] = await Promise.all([
+    import('turndown'),
+    import('turndown-plugin-gfm'),
+  ])
   const turndownService = new TurndownService({
     headingStyle: 'atx',
     codeBlockStyle: 'fenced',
@@ -258,6 +262,8 @@ function buildHtmlDocument(title: string, htmlContent: string): string {
 async function buildPdfBytes(title: string, htmlContent: string): Promise<Uint8Array> {
   // 导出前剥掉 TipTap 表格 <col> 上的显式宽度，避免列宽之和超出页面宽导致 PDF 右侧被截。
   const fullHtml = buildHtmlDocument(title, normalizeTablesForExport(htmlContent))
+  // 惰性加载：html2pdf.js 内含 html2canvas + jsPDF，仅在导出 PDF 时才引入
+  const { default: html2pdf } = await import('html2pdf.js')
   // 离屏渲染容器：用 0 尺寸的裁切外层把内容挡在用户视线外，但被截元素本身位于视口坐标 (0,0)，
   // 这样 html2canvas 能在“屏幕坐标”正确读取布局（之前放到 left:-10000px 会被截成空白页）。
   // 外层 visibility:hidden 防止渲染期间内容闪现（宽高为 0 + overflow:hidden 已裁切，
@@ -338,11 +344,14 @@ export async function buildExportBytes(
 ): Promise<Uint8Array> {
   switch (format) {
     case 'markdown':
-      return new TextEncoder().encode(htmlToMarkdown(title, htmlContent))
+      return new TextEncoder().encode(await htmlToMarkdown(title, htmlContent))
     case 'html':
       return new TextEncoder().encode(buildHtmlDocument(title, htmlContent))
-    case 'word':
+    case 'word': {
+      // 惰性加载：docx 库体积大，仅导出 Word 时才引入
+      const { buildDocx } = await import('./exportWord')
       return await buildDocx(title, htmlContent)
+    }
     case 'pdf':
       return await buildPdfBytes(title, htmlContent)
   }

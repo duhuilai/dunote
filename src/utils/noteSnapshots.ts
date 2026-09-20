@@ -34,8 +34,26 @@ export const MAX_SNAPSHOTS = 200
 export const RETENTION_DAYS = 7
 /** 清理后**至少**保留的最近版本数（即使已全部过期） */
 export const MIN_KEEP = 5
+/**
+ * 单篇笔记的版本总容量预算（字节，默认 150MB）。
+ * 正文含 base64 图片时单份可达数 MB，若只按条数限制，200 份就可能占用 GB 级磁盘，
+ * 因此再按总容量兜底：超出后从最旧的版本开始删，直到回到预算内（仍至少保留 MIN_KEEP 版）。
+ */
+export const MAX_TOTAL_BYTES_PER_NOTE = 150 * 1024 * 1024
 
 const DAY_MS = 24 * 60 * 60 * 1000
+/** 条数超过「上限 + 缓冲」时才执行一次清理，避免每次保存都全量扫描目录 */
+const PRUNE_BUFFER = 20
+
+/**
+ * 内存缓存：noteId -> 最新一版的时间戳与内容指纹。
+ * 用于在不读取磁盘的情况下完成「与上一版内容相同则不重复留档」的判断，
+ * 把每次自动保存的文件读取次数从「遍历全部版本」降到常数级。
+ */
+/** 版本总字节数缓存：noteId -> 字节数（避免每次保存都遍历统计） */
+const sizeCache = new Map<string, number>()
+
+const latestCache = new Map<string, { ts: number; hash: string }>()
 
 /** noteId 可能含路径分隔符等非法字符，转成安全的目录名 */
 function noteKeyOf(noteId: string): string {
@@ -80,14 +98,25 @@ async function noteDir(noteId: string, create: boolean): Promise<string> {
  * 保存一个版本（每次自动保存成功后调用）。
  * 与上一次留档内容完全相同时自动跳过，避免空转刷出大量重复版本。
  * 失败不影响主流程（文件本身已写入成功），仅记录日志。
+ *
+ * 性能：命中内存缓存时几乎零 I/O；未命中也只读取「最新一个」元数据，
+ * 且仅在条数超过上限时才做一次清理，不再每次保存都遍历全部版本目录。
  */
 export async function saveSnapshot(noteId: string, title: string, content: string): Promise<void> {
   try {
     if (!noteId || !content) return
     const hash = hashContent(content)
-    // 去重：与最新一版内容一致则不重复留档
-    const latest = await listSnapshots(noteId)
-    if (latest.length > 0 && latest[0].hash === hash) return
+
+    // 去重：优先用内存缓存，避免任何磁盘读取
+    let newest = latestCache.get(noteId)
+    if (!newest) {
+      const meta = await newestMeta(await noteDir(noteId, true))
+      if (meta) {
+        newest = { ts: meta.ts, hash: meta.hash }
+        latestCache.set(noteId, newest)
+      }
+    }
+    if (newest && newest.hash === hash) return
 
     const dir = await noteDir(noteId, true)
     const ts = Date.now()
@@ -95,7 +124,28 @@ export async function saveSnapshot(noteId: string, title: string, content: strin
     await writeTextFile(`${base}.html`, content)
     const meta: SnapshotMeta = { ts, title: title || '', bytes: content.length, hash }
     await writeTextFile(`${base}.meta.json`, JSON.stringify(meta))
-    await pruneSnapshots(noteId)
+    latestCache.set(noteId, { ts, hash })
+
+    // 容量预算：超出后从最旧的版本开始删，避免含 base64 图片的大笔记占满磁盘
+    const bytes = content.length
+    let total = sizeCache.get(noteId)
+    if (total == null) {
+      const metas = await listSnapshotsIn(dir)
+      total = metas.reduce((s, m) => s + (m.bytes || 0), 0)
+    }
+    total += bytes
+    sizeCache.set(noteId, total)
+
+    // 仅在「条数明显超限」或「总容量超预算」时才清理
+    // （readDir 很轻，但 pruneDir 会读取全部元数据，故需限频）
+    if (total > MAX_TOTAL_BYTES_PER_NOTE) {
+      sizeCache.set(noteId, await pruneDir(dir))
+    } else {
+      const count = await countIn(dir)
+      if (count > MAX_SNAPSHOTS + PRUNE_BUFFER) {
+        sizeCache.set(noteId, await pruneDir(dir))
+      }
+    }
   } catch (e) {
     console.warn('[Snapshot] 保存版本失败:', e)
   }
@@ -117,6 +167,51 @@ export async function readSnapshot(noteId: string, ts: number): Promise<string> 
 export async function deleteSnapshot(noteId: string, ts: number): Promise<void> {
   const dir = await noteDir(noteId, false)
   await deleteIn(dir, ts)
+  // 删掉的若是缓存中的「最新一版」，让缓存失效，下次保存重新探测
+  const cached = latestCache.get(noteId)
+  if (cached && cached.ts === ts) latestCache.delete(noteId)
+  // 容量缓存失效（下次保存时重新统计）
+  sizeCache.delete(noteId)
+}
+
+/**
+ * 读取「最新一个」版本的元数据。
+ * 只做一次 readDir 并按文件名（时间戳）取最大值，再读那一个元数据文件——
+ * 不遍历读取全部元数据，代价与版本数量无关。
+ */
+async function newestMeta(dir: string): Promise<SnapshotMeta | null> {
+  try {
+    if (!(await exists(dir))) return null
+    const entries = await readDir(dir)
+    let maxTs = 0
+    for (const entry of entries) {
+      const name = entry.name || ''
+      if (!name.endsWith('.meta.json')) continue
+      const ts = Number(name.slice(0, -'.meta.json'.length))
+      if (Number.isFinite(ts) && ts > maxTs) maxTs = ts
+    }
+    if (!maxTs) return null
+    const raw = await readTextFile(await join(dir, `${maxTs}.meta.json`))
+    const parsed = JSON.parse(raw) as SnapshotMeta
+    return typeof parsed?.ts === 'number' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/** 统计版本条数（仅 readDir，不读取文件内容） */
+async function countIn(dir: string): Promise<number> {
+  try {
+    if (!(await exists(dir))) return 0
+    const entries = await readDir(dir)
+    let n = 0
+    for (const entry of entries) {
+      if ((entry.name || '').endsWith('.meta.json')) n++
+    }
+    return n
+  } catch {
+    return 0
+  }
 }
 
 /** 读取目录下的版本元数据（倒序） */
@@ -155,25 +250,40 @@ async function deleteIn(dir: string, ts: number): Promise<void> {
 }
 
 /**
- * 对单个版本目录执行保留策略：
+ * 对单个版本目录执行保留策略，返回清理后剩余版本的**总字节数**：
  * - 最近 MIN_KEEP 版无条件保留
  * - 超过 RETENTION_DAYS 天的删除
  * - 超过 MAX_SNAPSHOTS 条的删除最旧的
+ * - 总容量超过 MAX_TOTAL_BYTES_PER_NOTE 的，从最旧开始删到预算内
  */
 async function pruneDir(dir: string): Promise<number> {
   const metas = await listSnapshotsIn(dir)
   if (metas.length === 0) return 0
   const cutoff = Date.now() - RETENTION_DAYS * DAY_MS
-  let removed = 0
+
+  // 1) 条数上限 + 过期清理
+  const kept: SnapshotMeta[] = []
   for (let i = 0; i < metas.length; i++) {
     const m = metas[i]
-    if (i < MIN_KEEP) continue
+    if (i < MIN_KEEP) {
+      kept.push(m)
+      continue
+    }
     if (i >= MAX_SNAPSHOTS || m.ts < cutoff) {
       await deleteIn(dir, m.ts)
-      removed++
+    } else {
+      kept.push(m)
     }
   }
-  return removed
+
+  // 2) 总容量预算：从最旧的一版开始删，直到回到预算内（至少保留 MIN_KEEP 版）
+  let total = kept.reduce((s, m) => s + (m.bytes || 0), 0)
+  for (let i = kept.length - 1; i >= MIN_KEEP && total > MAX_TOTAL_BYTES_PER_NOTE; i--) {
+    const m = kept[i]
+    await deleteIn(dir, m.ts)
+    total -= m.bytes || 0
+  }
+  return total
 }
 
 /** 清理某篇笔记的过期版本 */

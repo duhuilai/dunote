@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, lazy, Suspense } from 'react'
 import { getVersion } from '@tauri-apps/api/app'
 import { useAppStore } from '@/store'
 import { loadPersonnel, loadTasks } from '@/utils/storage'
@@ -8,12 +8,15 @@ import Sidebar from '@/components/layout/Sidebar'
 import NotesPage from '@/components/notes/NotesPage'
 import PersonnelPage from '@/components/personnel/PersonnelPage'
 import TasksPage from '@/components/tasks/TasksPage'
-import AnalyticsPage from '@/components/analytics/AnalyticsPage'
 import SettingsPage from '@/components/settings/SettingsPage'
 import Toast from '@/components/ui/Toast'
 import OverdueNotifier from '@/components/ui/OverdueNotifier'
 import { ConfirmProvider } from '@/components/ui/ConfirmDialog'
 import ErrorBoundary from '@/components/ui/ErrorBoundary'
+
+// 统计页依赖 recharts（图表库，体积较大）且只在切到该页时才需要，
+// 故用 React.lazy 拆包，避免启动时加载解析、常驻内存。
+const LazyAnalyticsPage = lazy(() => import('@/components/analytics/AnalyticsPage'))
 
 function App() {
   const currentPage = useAppStore((s) => s.currentPage)
@@ -74,7 +77,7 @@ function App() {
       case 'notes': return <NotesPage />
       case 'personnel': return <PersonnelPage />
       case 'tasks': return <TasksPage />
-      case 'analytics': return <AnalyticsPage />
+      case 'analytics': return <LazyAnalyticsPage />
       case 'settings': return <SettingsPage />
       default: return <NotesPage />
     }
@@ -86,7 +89,16 @@ function App() {
         <Sidebar />
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
           <ErrorBoundary>
-            {renderPage()}
+            {/* 统计页为懒加载包，首次进入时给出加载态 */}
+            <Suspense
+              fallback={
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94A3B8', fontSize: 13 }}>
+                  加载中…
+                </div>
+              }
+            >
+              {renderPage()}
+            </Suspense>
           </ErrorBoundary>
         </div>
         <Toast />

@@ -10,12 +10,25 @@
  *   - 本地文件笔记：提交其真实的 .html 文件（相对路径 = toRelativePath(filePath, root)）。
  *   - 内存型「普通笔记」：物化到 repoDir/.dunote/notes/<id>.html 后提交，避免污染用户可见文件。
  */
-import git from 'isomorphic-git'
 import { makeTauriFs } from './gitFs'
 import { tauriHttp } from './gitHttp'
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import * as tauriFs from '@tauri-apps/plugin-fs'
 import { join } from '@tauri-apps/api/path'
+
+/**
+ * isomorphic-git 惰性加载器。
+ * 该库体积很大（含压缩/inflate 等实现），但只有备份、历史、Gitee 同步时才用到；
+ * 静态导入会让应用启动时就解析并常驻内存。这里改成首次使用时才加载，并缓存 Promise。
+ */
+type GitModule = typeof import('isomorphic-git')
+let gitModulePromise: Promise<GitModule> | null = null
+function loadGit(): Promise<GitModule> {
+  if (!gitModulePromise) {
+    gitModulePromise = import('isomorphic-git').then((m: any) => m.default ?? m)
+  }
+  return gitModulePromise
+}
 
 const GIT_USER_NAME = 'duNote'
 const GIT_USER_EMAIL = 'dunote@local'
@@ -56,6 +69,7 @@ function getFs(repoDir: string) {
 
 /** 确保 repoDir 是一个 git 仓库，并设置提交身份 */
 export async function ensureRepo(repoDir: string): Promise<BackupResult> {
+  const git = await loadGit()
   const fs = getFs(repoDir)
   try {
     // 用 @tauri-apps/api/path 的 join 拼 .git 路径：
@@ -80,6 +94,7 @@ export async function commitNoteFile(opts: {
   content: string
   message: string
 }): Promise<BackupResult> {
+  const git = await loadGit()
   const fs = getFs(opts.repoDir)
   try {
     await ensureRepo(opts.repoDir)
@@ -106,6 +121,7 @@ export async function listHistory(
   ref = 'HEAD',
   depth = 100
 ): Promise<HistoryVersion[]> {
+  const git = await loadGit()
   const fs = getFs(repoDir)
   try {
     const log = await git.log({ fs, dir: repoDir, ref, filepath: relPath, depth })
@@ -127,6 +143,7 @@ export async function readVersion(
   relPath: string,
   oid: string
 ): Promise<string | null> {
+  const git = await loadGit()
   const fs = getFs(repoDir)
   try {
     const { blob } = await git.readBlob({ fs, dir: repoDir, oid, filepath: relPath })
@@ -152,6 +169,7 @@ export async function pushToRemote(opts: {
   /** 是否强推（默认 false）。仅当确认远端历史可丢弃时才应传 true。 */
   force?: boolean
 }): Promise<BackupResult> {
+  const git = await loadGit()
   const fs = getFs(opts.repoDir)
   const branch = opts.branch || 'main'
   const useForce = opts.force === true
@@ -228,6 +246,7 @@ export async function pullRemote(opts: {
   username: string
   branch?: string
 }): Promise<BackupResult> {
+  const git = await loadGit()
   const fs = getFs(opts.repoDir)
   const branch = opts.branch || 'main'
   try {

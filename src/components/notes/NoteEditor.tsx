@@ -109,7 +109,7 @@ import {
   AlignLeft, AlignCenter, AlignRight, Plus, Trash2, Table as TableIcon, X, Search,
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight
 } from 'lucide-react'
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useLayoutEffect } from 'react'
 import { exportNote, exportToDownloads, type ExportFormat } from '@/utils/exportNote'
 import { ExportSaveModal } from './ExportSaveModal'
 import { toRelativePath, resolveGiteeRemoteUrl } from '@/utils/sync'
@@ -262,7 +262,10 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
       SearchExtension,
       ImeGuard,
     ],
-    content: note.content,
+    // 初始内容留空：挂载后的加载 effect 一定会为当前笔记重新 setContent（本地笔记以磁盘为权威）。
+    // 若这里传 note.content，大文档（含 base64 图片）会在启动时被解析两遍（一次在这里、
+    // 一次在 effect 的 setContent），白白翻倍启动耗时与内存峰值。
+    content: '',
     editorProps: {
       attributes: {
         class: 'tiptap',
@@ -547,7 +550,9 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     }
   }, [flushPending])
 
-  useEffect(() => {
+  // 用 layout effect：内容切换（flush 旧笔记 + 锁定编辑 + setContent）在浏览器绘制前完成，
+  // 避免先绘制出上一篇/空内容再跳变，同时消除「初始 content 为空」带来的空帧窗口。
+  useLayoutEffect(() => {
     if (!editor) return
     const targetId = note.id
     const isLocal = !!(note as any)._isLocalFile

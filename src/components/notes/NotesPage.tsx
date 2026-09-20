@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useAppStore } from '@/store'
 import {
   Search, Plus, ChevronDown, ChevronRight, ChevronRight as ChevronRightIcon, Folder,
@@ -14,7 +14,7 @@ import { open, message } from '@tauri-apps/plugin-dialog'
 import { readDir, readTextFile, writeTextFile, mkdir, exists, remove } from '@tauri-apps/plugin-fs'
 import { appConfigDir, join, dirname } from '@tauri-apps/api/path'
 import { open as shellOpen } from '@tauri-apps/plugin-shell'
-import { marked } from 'marked'
+// 惰性加载说明：marked 已改为在导入 Markdown 时动态 import，不在顶层引入
 import { loadNoteTypes, saveNoteType, toRelPath, loadNoteTitles } from '@/utils/noteMeta'
 import { loadOrderData, applyOrder, orderOf, compareByOrder, reorderIds, shiftId } from '@/utils/noteOrder'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
@@ -1043,7 +1043,11 @@ export default function NotesPage() {
     n.title.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const selectedNote = [...notes, ...localNotes].find((n) => n.id === selectedNoteId)
+  // 缓存选中笔记：避免每次渲染都新建合并数组并线性查找（笔记数量多时是 O(n) 的重复开销）
+  const selectedNote = useMemo(
+    () => [...notes, ...localNotes].find((n) => n.id === selectedNoteId),
+    [notes, localNotes, selectedNoteId],
+  )
 
   // 本地文件笔记在编辑器里落盘后，同步更新内存中的 localNotes（selectedNote 来源），
   // 否则切换文档再切回时会读到旧内容，导致刚粘贴的图片丢失
@@ -1644,6 +1648,8 @@ export default function NotesPage() {
       let imported = 0
       let errors = 0
 
+      // 惰性加载：marked 仅在「导入 Markdown」时使用，避免启动时加载解析
+      const { marked } = await import('marked')
       for (const filePath of files) {
         try {
           const mdContent = await readTextFile(filePath as string)

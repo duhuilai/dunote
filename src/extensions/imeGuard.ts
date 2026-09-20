@@ -15,7 +15,7 @@
  */
 
 import { Extension } from '@tiptap/core'
-import { Plugin, PluginKey } from '@tiptap/pm/state'
+import { Plugin, PluginKey, type Transaction, type EditorState } from '@tiptap/pm/state'
 
 /** 宽限期：合成刚结束到扩展窗口内，认为可能是 IME 提交残留 */
 export const IME_GRACE_MS = 1200
@@ -87,6 +87,42 @@ function isCellParagraphSplit(
   return b.paras > a.paras
 }
 
+/**
+ * 廉价预筛：直接检查事务的 steps，判断是否存在「落在表格单元格内且插入了段落」的步骤。
+ *
+ * 代价为 O(steps × 节点深度)，与文档大小无关；而 `isCellParagraphSplit` 需要遍历
+ * 整个文档树。在 IME 宽限期内每次按键都会触发 filterTransaction，若每键都全量遍历文档，
+ * 大文档（尤其含大量 base64 图片）会产生明显卡顿。因此先用本函数排除绝大多数无关事务。
+ *
+ * 语义上只做「可能命中」的判定——返回 true 时再由 `isCellParagraphSplit` 精确确认，
+ * 因此不会改变拦截结果，只是避免无谓的全文档扫描。
+ */
+function maybeCellSplitBySteps(tr: Transaction, state: EditorState): boolean {
+  for (const step of tr.steps) {
+    const from = (step as unknown as { from?: number }).from
+    if (typeof from !== 'number') continue
+    const slice = (step as unknown as { slice?: { content?: any } }).slice
+    if (!slice?.content || slice.content.size === 0) continue
+    // 只有插入了文本块（段落）才可能是 splitBlock 造成的单元格内换行
+    let hasTextblock = false
+    slice.content.forEach((n: any) => {
+      if (n.isTextblock) hasTextblock = true
+    })
+    if (!hasTextblock) continue
+    // 插入位置是否在表格单元格内？resolve 后向上查找祖先，代价 O(depth)
+    try {
+      const $from = state.doc.resolve(Math.min(Math.max(from, 0), state.doc.content.size))
+      for (let d = $from.depth; d > 0; d--) {
+        const name = $from.node(d).type.name
+        if (name === 'tableCell' || name === 'tableHeader') return true
+      }
+    } catch {
+      /* 位置非法则忽略该 step */
+    }
+  }
+  return false
+}
+
 export const ImeGuard = Extension.create({
   name: 'imeGuard',
 
@@ -98,6 +134,8 @@ export const ImeGuard = Extension.create({
         filterTransaction(tr, state) {
           if (!tr.docChanged) return true
           if (!imeGrace.isInGrace()) return true
+          // 先用与文档大小无关的 step 级预筛，避免宽限期内每次按键都全文档遍历
+          if (!maybeCellSplitBySteps(tr, state)) return true
           if (isCellParagraphSplit(state.doc, tr.doc)) {
             // 仅打印一次/秒，避免在 IME 期间刷屏
             const now = Date.now()
