@@ -1,9 +1,11 @@
 import { open } from '@tauri-apps/plugin-shell'
+import { Command } from '@tauri-apps/plugin-shell'
 import { fetch } from '@tauri-apps/plugin-http'
 import { writeFile, mkdir, exists } from '@tauri-apps/plugin-fs'
 import { appConfigDir, join } from '@tauri-apps/api/path'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { exit } from '@tauri-apps/plugin-process'
+import { invoke } from '@tauri-apps/api/core'
 
 const REPO = 'duhuilai/dunote'
 const RELEASE_API = `https://api.github.com/repos/${REPO}/releases/latest`
@@ -245,10 +247,59 @@ export async function downloadUpdate(
 }
 
 /**
- * 用系统关联程序打开已下载的安装包。
+ * Windows：静默安装（无窗口、无 UAC），装完自动拉起新版本。
  *
- * - Windows：启动 exe/msi 安装向导后**必须退出**当前进程，否则安装程序无法替换
- *   正在运行的旧文件。macOS 同理需要真正 exit()（仅 close() 窗口不会结束进程）。
+ * 实现要点：
+ * 1. Tauri 的 NSIS `-setup.exe` 支持 `/S`（大写）静默安装，且默认 installMode 为
+ *    currentUser（安装到 %LOCALAPPDATA%），因此**不会触发 UAC 提权**，可以做到全程无窗口。
+ * 2. 旧版本必须先退出，否则安装目录里的 duNote.exe 被占用、无法覆盖。但进程退出后
+ *    就没有任何代码能再执行，所以这里把「等待 → 安装 → 拉起」整条指令交给一个
+ *    先于本进程退出就已启动、且**脱离本进程**的 `cmd /c` 子进程托管：
+ *      ping -n 4 127.0.0.1 >nul & start "" /WAIT "<安装包>" /S & start "" "<新版 exe>"
+ *    - `ping -n 4` 用于延迟约 3 秒（不能用 `timeout`：从 spawn 启动的进程 stdin 被重定向，
+ *      timeout 会直接报错退出）。
+ *    - `start "" /WAIT` 等待安装程序结束后再执行下一步，保证拉起的是新版。
+ *    - 用 `start "" "<exe>"` 重新打开应用；exe 路径由 Rust 的 app_exe_path 提供，
+ *      避免硬编码 %LOCALAPPDATA% 在自定义安装目录下失效。
+ * 3. spawn 出的 cmd 是独立 OS 进程，本进程 exit(0) 不会连带终止它。
+ */
+export async function silentInstallWindows(
+  filePath: string,
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    // 当前 exe 绝对路径（安装目录即新版安装目录）；拿不到则退化为只安装、不自动拉起
+    let exePath = ''
+    try {
+      exePath = await invoke<string>('app_exe_path')
+    } catch {
+      exePath = ''
+    }
+
+    const relaunch = exePath ? ` & start "" "${exePath}"` : ''
+    const script = `ping -n 4 127.0.0.1 >nul & start "" /WAIT "${filePath}" /S${relaunch}`
+    await Command.create('cmd', ['/c', script]).spawn()
+
+    // 子进程已接管安装流程，本进程立即退出让出安装目录
+    await new Promise((r) => setTimeout(r, 300))
+    try {
+      await exit(0)
+    } catch {
+      await getCurrentWebviewWindow().close()
+    }
+    return { ok: true, message: '正在后台静默安装…' }
+  } catch (e: any) {
+    const msg = e?.message ? `静默安装失败：${e.message}` : '静默安装失败'
+    return { ok: false, message: msg }
+  }
+}
+
+/**
+ * 打开/安装已下载的安装包。
+ *
+ * - Windows（NSIS .exe）：走静默安装 —— 后台无窗口完成安装并自动打开新版本，
+ *   过程中本进程会立即退出（旧 exe 被占用时无法覆盖）。
+ * - Windows（.msi 等）：WiX 默认是 per-machine 安装，静默也会弹 UAC，无法真正无感，
+ *   因此保持原来的向导行为。
  * - macOS：`.dmg` 只是挂载磁盘镜像并弹出访达窗口，仍需用户手动把 duNote 拖进
  *   「应用程序」。若此处直接 exit(0)，用户会看到 dmg 窗口但 App 已消失、毫无提示，
  *   体验很差。因此 macOS 不自动退出，改为返回 manualInstall 标记，由 UI 引导用户
@@ -256,13 +307,13 @@ export async function downloadUpdate(
  */
 export async function openInstaller(
   filePath: string,
-): Promise<{ ok: boolean; message: string; manualInstall?: boolean }> {
+): Promise<{ ok: boolean; message: string; manualInstall?: boolean; silent?: boolean }> {
   try {
     const platform = detectPlatform()
-    // 1) 让系统打开安装包（macOS 挂载 dmg / Windows 启动安装向导）
-    await open(filePath)
 
+    // macOS：dmg 只能手动拖拽安装，保持引导
     if (platform === 'macos') {
+      await open(filePath)
       return {
         ok: true,
         manualInstall: true,
@@ -270,13 +321,18 @@ export async function openInstaller(
       }
     }
 
-    // 2) 略作等待，确保安装程序已被系统启动，再退出当前 App 进程，
-    //    避免 macOS 上窗口关闭但进程仍在运行、安装包无法替换旧 app 的问题。
+    // Windows NSIS 安装包：静默安装 + 自动拉起（会退出本进程，不返回）
+    if (platform === 'windows' && /\.exe$/i.test(filePath)) {
+      const res = await silentInstallWindows(filePath)
+      return { ok: res.ok, message: res.message, silent: true }
+    }
+
+    // 其他情况（msi 等）：交给系统打开安装向导，随后退出本进程让出文件
+    await open(filePath)
     await new Promise((r) => setTimeout(r, 300))
     try {
       await exit(0)
     } catch {
-      // 极少数情况下 exit 不可用（权限/插件缺失），退回到仅关闭窗口
       await getCurrentWebviewWindow().close()
     }
     return { ok: true, message: '正在启动安装程序…' }

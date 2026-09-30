@@ -23,6 +23,7 @@
     "fs:allow-lstat",
     "fs:allow-read-file",
     "shell:allow-open",
+    "shell:allow-spawn",
     "process:allow-exit",
     "http:default",
     {

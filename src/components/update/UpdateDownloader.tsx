@@ -22,6 +22,8 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
   const showToast = useAppStore((s) => s.showToast)
   /** macOS 手动安装引导文案（dmg 需用户自行拖拽，不能静默退出） */
   const [installHint, setInstallHint] = useState<string | null>(null)
+  /** 静默安装已触发：本进程会立即退出，期间禁用按钮避免重复启动安装程序 */
+  const [installing, setInstalling] = useState(false)
 
   if (!updateInfo?.hasUpdate) return null
 
@@ -50,18 +52,28 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
   }
 
   const handleInstall = async () => {
-    if (!dl.filePath) return
+    if (!dl.filePath || installing) return
     setInstallHint(null)
+    setInstalling(true)
     const res = await openInstaller(dl.filePath)
     if (!res.ok) {
+      setInstalling(false)
       showToast(res.message, 'error')
+      return
+    }
+    // Windows：已交给后台 cmd 静默安装，本进程随即退出，装完自动打开新版本
+    if (res.silent) {
+      showToast('正在后台静默安装，完成后会自动打开新版本', 'success')
       return
     }
     // macOS：dmg 只是挂载镜像，需用户手动拖入「应用程序」，不能无声退出
     if (res.manualInstall) {
+      setInstalling(false)
       setInstallHint(res.message)
       showToast('已打开安装包，请将 duNote 拖入「应用程序」', 'success')
+      return
     }
+    setInstalling(false)
   }
 
   const indeterminate = dl.status === 'downloading' && dl.total <= 0
@@ -72,17 +84,19 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
     const installBtn = (
       <button
         onClick={handleInstall}
+        disabled={installing}
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           width: variant === 'compact' ? '100%' : 'auto',
           padding: '8px 16px', borderRadius: 8,
           border: 'none', background: '#166534', color: '#fff',
           fontSize: variant === 'compact' ? 12 : 13, fontWeight: 600,
-          cursor: 'pointer', fontFamily: 'inherit',
+          cursor: installing ? 'default' : 'pointer', fontFamily: 'inherit',
+          opacity: installing ? 0.6 : 1,
         }}
       >
         <CheckCircle2 size={variant === 'compact' ? 14 : 15} />
-        安装
+        {installing ? '正在安装…' : '安装'}
       </button>
     )
     if (variant === 'compact') {
