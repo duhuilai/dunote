@@ -142,6 +142,32 @@ const C = {
   surface: '#FFFFFF',
 } as const
 
+/**
+ * 下拉/弹出层展开时，点击容器外部自动收起。
+ *
+ * 关键约定：一个 ref 只能绑定到一个 DOM 元素。若同一个 ref 绑到多处（例如主工具栏与
+ * 浮动工具栏共用），后挂载的元素会覆盖 ref.current，且它在卸载时会被 React 置回 null，
+ * 而先挂载的元素不会重新 attach —— 结果是 ref.current 永久为 null，
+ * 判断 `!contains(target)` 恒不成立，弹层再也关不掉。
+ * 因此这里在 ref 为空时直接收起（而不是跳过），保证任何情况下点击外部都能关闭。
+ */
+function useAutoDismiss(
+  open: boolean,
+  setOpen: (open: boolean) => void,
+  containerRef: React.RefObject<HTMLElement | null>,
+) {
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (target && containerRef.current && containerRef.current.contains(target)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open, setOpen, containerRef])
+}
+
 interface NoteEditorProps {
   note: Note
   /** 本地文件笔记落盘后，同步更新内存中的 localNotes（selectedNote 来源），避免切回时读到旧内容导致图片丢失 */
@@ -942,20 +968,8 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     }
   }
 
-  // Close export menu when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
-        setShowExportMenu(false)
-      }
-    }
-    if (showExportMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showExportMenu])
+  // 点击外部收起导出菜单
+  useAutoDismiss(showExportMenu, setShowExportMenu, exportMenuRef)
 
   // Color picker functionality
   const [showColorPicker, setShowColorPicker] = useState(false)
@@ -972,20 +986,26 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     setShowColorPicker(false)
   }
 
-  // Close color picker when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (colorPickerRef.current && !colorPickerRef.current.contains(event.target as Node)) {
-        setShowColorPicker(false)
-      }
-    }
-    if (showColorPicker) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showColorPicker])
+  // 点击外部收起颜色选择器（仅主工具栏；两个浮动工具栏各自独立，见下方）
+  useAutoDismiss(showColorPicker, setShowColorPicker, colorPickerRef)
+
+  // 表格浮动工具栏的文本颜色：独立状态与 ref，避免与主工具栏共用 ref 导致收起失效
+  const [showTableColorPicker, setShowTableColorPicker] = useState(false)
+  const tableColorPickerRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showTableColorPicker, setShowTableColorPicker, tableColorPickerRef)
+
+  // 文本选中浮动工具栏：字体 / 字号 / 颜色 独立状态与 ref
+  const [showTextFontFamilyMenu, setShowTextFontFamilyMenu] = useState(false)
+  const textFontFamilyRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showTextFontFamilyMenu, setShowTextFontFamilyMenu, textFontFamilyRef)
+
+  const [showTextFontSizeMenu, setShowTextFontSizeMenu] = useState(false)
+  const textFontSizeRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showTextFontSizeMenu, setShowTextFontSizeMenu, textFontSizeRef)
+
+  const [showTextColorPicker, setShowTextColorPicker] = useState(false)
+  const textColorPickerRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showTextColorPicker, setShowTextColorPicker, textColorPickerRef)
 
   // Font family functionality
   const [showFontFamilyMenu, setShowFontFamilyMenu] = useState(false)
@@ -1009,19 +1029,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     setShowFontFamilyMenu(false)
   }
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (fontFamilyRef.current && !fontFamilyRef.current.contains(event.target as Node)) {
-        setShowFontFamilyMenu(false)
-      }
-    }
-    if (showFontFamilyMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showFontFamilyMenu])
+  useAutoDismiss(showFontFamilyMenu, setShowFontFamilyMenu, fontFamilyRef)
 
   // Font size functionality
   const [showFontSizeMenu, setShowFontSizeMenu] = useState(false)
@@ -1071,19 +1079,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     setShowFontSizeMenu(false)
   }
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (fontSizeRef.current && !fontSizeRef.current.contains(event.target as Node)) {
-        setShowFontSizeMenu(false)
-      }
-    }
-    if (showFontSizeMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showFontSizeMenu])
+  useAutoDismiss(showFontSizeMenu, setShowFontSizeMenu, fontSizeRef)
 
   // Cell background color functionality
   const [showCellColorPicker, setShowCellColorPicker] = useState(false)
@@ -1103,19 +1099,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     setShowCellColorPicker(false)
   }
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (cellColorRef.current && !cellColorRef.current.contains(event.target as Node)) {
-        setShowCellColorPicker(false)
-      }
-    }
-    if (showCellColorPicker) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showCellColorPicker])
+  useAutoDismiss(showCellColorPicker, setShowCellColorPicker, cellColorRef)
 
   // Context menu for table
   const [showTableContextMenu, setShowTableContextMenu] = useState(false)
@@ -1188,6 +1172,22 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
+  }, [showTextContextMenu])
+
+  // 浮动工具栏关闭时，一并收起它内部的子下拉，避免下次唤起时残留展开状态
+  useEffect(() => {
+    if (showTableContextMenu) return
+    setShowTableColorPicker(false)
+    setShowCellColorPicker(false)
+    setShowInsertMenu(false)
+    setShowDeleteMenu(false)
+  }, [showTableContextMenu])
+
+  useEffect(() => {
+    if (showTextContextMenu) return
+    setShowTextFontFamilyMenu(false)
+    setShowTextFontSizeMenu(false)
+    setShowTextColorPicker(false)
   }, [showTextContextMenu])
 
   const ToolBtn = ({ active, onClick, children, title }: {
@@ -1936,16 +1936,16 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
           <div style={{ width: '1px', height: '24px', background: C.border, margin: '0 2px' }} />
 
           {/* Text Color */}
-          <div style={{ position: 'relative' }} ref={colorPickerRef}>
+          <div style={{ position: 'relative' }} ref={tableColorPickerRef}>
             <button
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setShowColorPicker((v) => !v)}
+              onClick={() => setShowTableColorPicker((v) => !v)}
               title="文本颜色"
               style={{
                 padding: '6px',
                 borderRadius: '6px',
-                border: showColorPicker ? `1px solid ${C.primary}` : `1px solid ${C.border}`,
-                background: showColorPicker ? C.primaryLight : C.surface,
+                border: showTableColorPicker ? `1px solid ${C.primary}` : `1px solid ${C.border}`,
+                background: showTableColorPicker ? C.primaryLight : C.surface,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -1956,7 +1956,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               <Palette size={16} style={{ color: C.textSecondary }} />
             </button>
 
-            {showColorPicker && (
+            {showTableColorPicker && (
               <div
                 style={{
                   position: 'absolute',
@@ -1979,7 +1979,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         handleColorChange(color)
-                        setShowColorPicker(false)
+                        setShowTableColorPicker(false)
                       }}
                       style={{
                         width: '20px',
@@ -2417,16 +2417,16 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
           <div style={{ width: '1px', height: '24px', background: C.border, margin: '0 2px' }} />
 
           {/* Font Family Dropdown */}
-          <div style={{ position: 'relative' }} ref={fontFamilyRef}>
+          <div style={{ position: 'relative' }} ref={textFontFamilyRef}>
             <button
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setShowFontFamilyMenu((v) => !v)}
+              onClick={() => setShowTextFontFamilyMenu((v) => !v)}
               title="字体"
               style={{
                 padding: '6px 8px',
                 borderRadius: '6px',
-                border: showFontFamilyMenu ? `1px solid ${C.primary}` : `1px solid ${C.border}`,
-                background: showFontFamilyMenu ? C.primaryLight : C.surface,
+                border: showTextFontFamilyMenu ? `1px solid ${C.primary}` : `1px solid ${C.border}`,
+                background: showTextFontFamilyMenu ? C.primaryLight : C.surface,
                 cursor: 'pointer',
                 fontSize: '12px',
                 color: C.text,
@@ -2442,7 +2442,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               <ChevronDown size={12} style={{ color: C.textMuted }} />
             </button>
 
-            {showFontFamilyMenu && (
+            {showTextFontFamilyMenu && (
               <div
                 style={{
                   position: 'absolute',
@@ -2466,7 +2466,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       handleFontFamilyChange(value)
-                      setShowFontFamilyMenu(false)
+                      setShowTextFontFamilyMenu(false)
                     }}
                     style={{
                       display: 'block',
@@ -2493,16 +2493,16 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
           </div>
 
           {/* Font Size Dropdown */}
-          <div style={{ position: 'relative' }} ref={fontSizeRef}>
+          <div style={{ position: 'relative' }} ref={textFontSizeRef}>
             <button
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setShowFontSizeMenu((v) => !v)}
+              onClick={() => setShowTextFontSizeMenu((v) => !v)}
               title="字号"
               style={{
                 padding: '6px 8px',
                 borderRadius: '6px',
-                border: showFontSizeMenu ? `1px solid ${C.primary}` : `1px solid ${C.border}`,
-                background: showFontSizeMenu ? C.primaryLight : C.surface,
+                border: showTextFontSizeMenu ? `1px solid ${C.primary}` : `1px solid ${C.border}`,
+                background: showTextFontSizeMenu ? C.primaryLight : C.surface,
                 cursor: 'pointer',
                 fontSize: '12px',
                 color: C.text,
@@ -2516,7 +2516,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               <ChevronDown size={12} style={{ color: C.textMuted }} />
             </button>
 
-            {showFontSizeMenu && (
+            {showTextFontSizeMenu && (
               <div
                 style={{
                   position: 'absolute',
@@ -2540,7 +2540,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       handleFontSizeChange(value)
-                      setShowFontSizeMenu(false)
+                      setShowTextFontSizeMenu(false)
                     }}
                     style={{
                       display: 'block',
@@ -2569,16 +2569,16 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
           <div style={{ width: '1px', height: '24px', background: C.border, margin: '0 2px' }} />
 
           {/* Text Color */}
-          <div style={{ position: 'relative' }} ref={colorPickerRef}>
+          <div style={{ position: 'relative' }} ref={textColorPickerRef}>
             <button
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setShowColorPicker((v) => !v)}
+              onClick={() => setShowTextColorPicker((v) => !v)}
               title="文本颜色"
               style={{
                 padding: '6px',
                 borderRadius: '6px',
-                border: showColorPicker ? `1px solid ${C.primary}` : `1px solid ${C.border}`,
-                background: showColorPicker ? C.primaryLight : C.surface,
+                border: showTextColorPicker ? `1px solid ${C.primary}` : `1px solid ${C.border}`,
+                background: showTextColorPicker ? C.primaryLight : C.surface,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -2589,7 +2589,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               <Palette size={16} style={{ color: C.textSecondary }} />
             </button>
 
-            {showColorPicker && (
+            {showTextColorPicker && (
               <div
                 style={{
                   position: 'absolute',
@@ -2612,7 +2612,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => {
                         handleColorChange(color)
-                        setShowColorPicker(false)
+                        setShowTextColorPicker(false)
                       }}
                       style={{
                         width: '20px',
