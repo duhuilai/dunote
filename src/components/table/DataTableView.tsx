@@ -28,6 +28,12 @@ const C = {
 const MIN_COL_WIDTH = 80
 const ACTION_COL_WIDTH = 36
 const DEFAULT_COL_WIDTH = 160
+/**
+ * 鼠标在单元格上停留多久才把它认定为插入锚点（毫秒）。
+ * 见 DataTableView 内 anchorColRef / anchorRowRef 的说明：必须区分「停留」与「掠过」，
+ * 否则从单元格移向上方工具栏时会把途经的行误当成锚点。
+ */
+const HOVER_SETTLE_MS = 260
 
 // 检索命中单元格高亮色（与编辑器 .search-match / .search-current 相近）
 const HL_MATCH = 'rgba(250, 204, 21, 0.38)'
@@ -101,43 +107,57 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   const [insertCount, setInsertCount] = useState(1)
   const [insertDir, setInsertDir] = useState<'top' | 'bottom' | 'left' | 'right'>('bottom')
   /**
-   * 插入锚点：鼠标最近停留（或点击/聚焦）过的列 / 行。
+   * 插入锚点：鼠标**停留**过、或点击 / 聚焦过的列 / 行。
+   *
    * 用 ref 而不是 state —— 鼠标在单元格间移动非常频繁，若用 state 会导致整表重渲染。
    * 只在打开插入弹层时把值快照到 insertAnchor（state）用于提示与实际插入。
+   *
+   * 注意「停留」与「掠过」的区别：工具栏在表格上方，用户从某行移向「插入」按钮时
+   * 会垂直穿过上方若干行。若 mouseenter 立即写锚点，最终留下的会是最后掠过的那一行
+   * （通常是靠近工具栏的顶部行），与用户意图不符。因此这里要求鼠标在该单元格
+   * 停留超过 HOVER_SETTLE_MS 才认定其为锚点。
    */
   const anchorColRef = useRef<string | null>(null)
   const anchorRowRef = useRef<string | null>(null)
+  const hoverTimerRef = useRef<number | null>(null)
   const [insertAnchor, setInsertAnchor] = useState<{ colId: string | null; rowId: string | null }>({
     colId: null,
     rowId: null,
   })
+
+  /** 取消尚未生效的悬停计时（鼠标只是路过，不应留下锚点） */
+  const cancelPendingAnchor = () => {
+    if (hoverTimerRef.current !== null) {
+      clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
+  }
+
+  /** 悬停：停留满 HOVER_SETTLE_MS 才算数；期间移入其他单元格会重置计时 */
+  const scheduleAnchor = (colId: string | null, rowId: string | null) => {
+    cancelPendingAnchor()
+    hoverTimerRef.current = window.setTimeout(() => {
+      hoverTimerRef.current = null
+      anchorColRef.current = colId
+      anchorRowRef.current = rowId
+    }, HOVER_SETTLE_MS)
+  }
+
+  /** 点击 / 聚焦：明确的意图，立即锁定锚点并取消待定的悬停计时 */
+  const pinAnchor = (colId: string | null, rowId: string | null) => {
+    cancelPendingAnchor()
+    anchorColRef.current = colId
+    anchorRowRef.current = rowId
+  }
+
   /** 鼠标移出整个表格组件（含工具栏）时清除锚点，此后插入退化为最前 / 最后 */
   const clearAnchor = () => {
+    cancelPendingAnchor()
     anchorColRef.current = null
     anchorRowRef.current = null
   }
 
-  /** 插入弹层里的位置提示文案：锚点存在时说明相对哪一列/行，否则提示插入到边缘 */
-  const insertHintText = (() => {
-    const rowIdx = insertAnchor.rowId ? rows.findIndex((r) => r.id === insertAnchor.rowId) : -1
-    const anchorCol = insertAnchor.colId
-      ? columns.find((c) => c.id === insertAnchor.colId)
-      : undefined
-    if (insertDir === 'top' || insertDir === 'bottom') {
-      if (rowIdx >= 0) {
-        return insertDir === 'top'
-          ? `在第 ${rowIdx + 1} 行上方插入`
-          : `在第 ${rowIdx + 1} 行下方插入`
-      }
-      return insertDir === 'top' ? '未指向具体行，插入到最上方' : '未指向具体行，插入到最下方'
-    }
-    if (anchorCol) {
-      return insertDir === 'left'
-        ? `在「${anchorCol.name}」左侧插入`
-        : `在「${anchorCol.name}」右侧插入`
-    }
-    return insertDir === 'left' ? '未指向具体列，插入到最左侧' : '未指向具体列，插入到最右侧'
-  })()
+  useEffect(() => cancelPendingAnchor, [])
 
   const tableWrapRef = useRef<HTMLDivElement>(null)
 
@@ -364,6 +384,32 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
     return list
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, columns, sort, filters])
+
+  /**
+   * 插入弹层里的位置提示文案：锚点存在时说明相对哪一列 / 行，否则提示插入到边缘。
+   * 行号优先取 displayRows 中的序号（即用户当前看到的序号，筛选 / 排序后仍一致），
+   * 锚点行被筛掉时才退回原始数据中的序号。
+   */
+  const insertHintText = (() => {
+    const anchorCol = insertAnchor.colId
+      ? columns.find((c) => c.id === insertAnchor.colId)
+      : undefined
+    if (insertDir === 'top' || insertDir === 'bottom') {
+      const dataIdx = insertAnchor.rowId ? rows.findIndex((r) => r.id === insertAnchor.rowId) : -1
+      if (dataIdx < 0) {
+        return insertDir === 'top' ? '未指向具体行，插入到最上方' : '未指向具体行，插入到最下方'
+      }
+      const dispIdx = displayRows.findIndex((r) => r.id === insertAnchor.rowId)
+      const no = dispIdx >= 0 ? dispIdx + 1 : dataIdx + 1
+      return insertDir === 'top' ? `在第 ${no} 行上方插入` : `在第 ${no} 行下方插入`
+    }
+    if (anchorCol) {
+      return insertDir === 'left'
+        ? `在「${anchorCol.name}」左侧插入`
+        : `在「${anchorCol.name}」右侧插入`
+    }
+    return insertDir === 'left' ? '未指向具体列，插入到最左侧' : '未指向具体列，插入到最右侧'
+  })()
 
   /* ── 统计 ── */
   const stats = useMemo(() => {
@@ -698,6 +744,9 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
         {/* ── 表格（固定表头） ── */}
         <div
           ref={tableWrapRef}
+          // 离开表格数据区（例如移向上方工具栏）时撤销尚未生效的悬停计时：
+          // 途经的行不应变成锚点，锚点保持为之前真正停留过的那一行
+          onMouseLeave={cancelPendingAnchor}
           style={{
             overflow: 'auto',
             maxHeight: 'min(60vh, 520px)',
@@ -724,8 +773,8 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                 {columns.map((c) => (
                   <th
                     key={c.id}
-                    onMouseEnter={() => { anchorColRef.current = c.id }}
-                    onMouseDown={() => { anchorColRef.current = c.id }}
+                    onMouseEnter={() => scheduleAnchor(c.id, anchorRowRef.current)}
+                    onMouseDown={() => pinAnchor(c.id, anchorRowRef.current)}
                     style={{
                       width: c.width ?? DEFAULT_COL_WIDTH,
                       minWidth: c.width ?? DEFAULT_COL_WIDTH,
@@ -814,6 +863,7 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                 <tr key={r.id}>
                   {/* 行操作 */}
                   <td
+                    onMouseEnter={() => scheduleAnchor(anchorColRef.current, r.id)}
                     style={{
                       width: ACTION_COL_WIDTH,
                       minWidth: ACTION_COL_WIDTH,
@@ -856,9 +906,9 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                     <td
                       key={c.id}
                       className={hl === 'current' ? 'search-current' : hl === 'match' ? 'search-match' : undefined}
-                      onMouseEnter={() => { anchorColRef.current = c.id; anchorRowRef.current = r.id }}
-                      onMouseDown={() => { anchorColRef.current = c.id; anchorRowRef.current = r.id }}
-                      onFocus={() => { anchorColRef.current = c.id; anchorRowRef.current = r.id }}
+                      onMouseEnter={() => scheduleAnchor(c.id, r.id)}
+                      onMouseDown={() => pinAnchor(c.id, r.id)}
+                      onFocus={() => pinAnchor(c.id, r.id)}
                       style={{
                         width: c.width ?? DEFAULT_COL_WIDTH,
                         minWidth: c.width ?? DEFAULT_COL_WIDTH,
