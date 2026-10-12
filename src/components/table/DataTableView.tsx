@@ -100,6 +100,44 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
   const [insertPos, setInsertPos] = useState<{ left: number; top: number } | null>(null)
   const [insertCount, setInsertCount] = useState(1)
   const [insertDir, setInsertDir] = useState<'top' | 'bottom' | 'left' | 'right'>('bottom')
+  /**
+   * 插入锚点：鼠标最近停留（或点击/聚焦）过的列 / 行。
+   * 用 ref 而不是 state —— 鼠标在单元格间移动非常频繁，若用 state 会导致整表重渲染。
+   * 只在打开插入弹层时把值快照到 insertAnchor（state）用于提示与实际插入。
+   */
+  const anchorColRef = useRef<string | null>(null)
+  const anchorRowRef = useRef<string | null>(null)
+  const [insertAnchor, setInsertAnchor] = useState<{ colId: string | null; rowId: string | null }>({
+    colId: null,
+    rowId: null,
+  })
+  /** 鼠标移出整个表格组件（含工具栏）时清除锚点，此后插入退化为最前 / 最后 */
+  const clearAnchor = () => {
+    anchorColRef.current = null
+    anchorRowRef.current = null
+  }
+
+  /** 插入弹层里的位置提示文案：锚点存在时说明相对哪一列/行，否则提示插入到边缘 */
+  const insertHintText = (() => {
+    const rowIdx = insertAnchor.rowId ? rows.findIndex((r) => r.id === insertAnchor.rowId) : -1
+    const anchorCol = insertAnchor.colId
+      ? columns.find((c) => c.id === insertAnchor.colId)
+      : undefined
+    if (insertDir === 'top' || insertDir === 'bottom') {
+      if (rowIdx >= 0) {
+        return insertDir === 'top'
+          ? `在第 ${rowIdx + 1} 行上方插入`
+          : `在第 ${rowIdx + 1} 行下方插入`
+      }
+      return insertDir === 'top' ? '未指向具体行，插入到最上方' : '未指向具体行，插入到最下方'
+    }
+    if (anchorCol) {
+      return insertDir === 'left'
+        ? `在「${anchorCol.name}」左侧插入`
+        : `在「${anchorCol.name}」右侧插入`
+    }
+    return insertDir === 'left' ? '未指向具体列，插入到最左侧' : '未指向具体列，插入到最右侧'
+  })()
 
   const tableWrapRef = useRef<HTMLDivElement>(null)
 
@@ -155,24 +193,57 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
     commit(columns, next)
   }
 
+  /**
+   * 锚点求解：把「列 id / 行 id」换算成插入下标。
+   * @param ids      当前列（或行）数组
+   * @param anchorId 鼠标最近停留 / 点击过的列（行）id
+   * @param before   true = 插到锚点之前，false = 插到锚点之后
+   * @returns 插入下标；锚点为空或已不存在时返回 null（由调用方退化为最前 / 最后）
+   */
+  function resolveIndex<T extends { id: string }>(
+    ids: T[],
+    anchorId: string | null | undefined,
+    before: boolean,
+  ): number | null {
+    if (!anchorId) return null
+    const i = ids.findIndex((x) => x.id === anchorId)
+    if (i < 0) return null
+    return before ? i : i + 1
+  }
+
   /* ── 行列操作 ── */
-  // 插入多行：position='top' 在最上方、'bottom' 在最下方；count 默认 1
-  const insertRows = (count: number, position: 'top' | 'bottom') => {
+  /**
+   * 插入多行。
+   * @param position 'top' = 锚点行上方、'bottom' = 锚点行下方
+   * @param anchorRowId 锚点行；为空（鼠标未指向任何行）时退化为最上方 / 最下方
+   */
+  const insertRows = (count: number, position: 'top' | 'bottom', anchorRowId?: string | null) => {
     const n = Math.max(1, Math.min(100, Math.floor(count) || 1))
     const newRows: Row[] = Array.from({ length: n }, () => {
       const cells: Record<string, CellValue> = {}
       columns.forEach((c) => (cells[c.id] = emptyValueFor(c.type)))
       return { id: uid('row'), cells }
     })
-    commit(columns, position === 'top' ? [...newRows, ...rows] : [...rows, ...newRows])
+    const at = resolveIndex(rows, anchorRowId, position === 'top')
+    const next =
+      at === null
+        ? position === 'top'
+          ? [...newRows, ...rows]
+          : [...rows, ...newRows]
+        : [...rows.slice(0, at), ...newRows, ...rows.slice(at)]
+    commit(columns, next)
   }
 
   const deleteRow = (rowId: string) => {
     commit(columns, rows.filter((r) => r.id !== rowId))
   }
 
-  // 插入多列：position='left' 在最左侧、'right' 在最右侧；count 默认 1
-  const insertColumns = (count: number, position: 'left' | 'right') => {
+  /**
+   * 插入多列。
+   * @param position 'left' = 锚点列左侧、'right' = 锚点列右侧
+   * @param anchorColId 锚点列；为空（鼠标未指向任何列）时退化为最左侧 / 最右侧
+   */
+  const insertColumns = (count: number, position: 'left' | 'right', anchorColId?: string | null) => {
     const n = Math.max(1, Math.min(100, Math.floor(count) || 1))
     const startIdx = columns.length + 1
     const newCols: Column[] = Array.from({ length: n }, (_, i) => ({
@@ -182,7 +253,13 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
       options: [],
       width: DEFAULT_COL_WIDTH,
     }))
-    const nextCols = position === 'left' ? [...newCols, ...columns] : [...columns, ...newCols]
+    const at = resolveIndex(columns, anchorColId, position === 'left')
+    const nextCols =
+      at === null
+        ? position === 'left'
+          ? [...newCols, ...columns]
+          : [...columns, ...newCols]
+        : [...columns.slice(0, at), ...newCols, ...columns.slice(at)]
     const nextRows = rows.map((r) => {
       const cells = { ...r.cells }
       newCols.forEach((c) => { cells[c.id] = emptyValueFor('text') })
@@ -354,6 +431,7 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
       style={{ margin: '12px 0' }}
     >
       <div
+        onMouseLeave={clearAnchor}
         style={{
           border: `1px solid ${C.border}`,
           borderRadius: '10px',
@@ -381,6 +459,11 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                 const next = !insertPop
                 setInsertPop(next)
                 setInsertPos(next && insertBtnRef.current ? rectOf(insertBtnRef.current) : null)
+                // 打开弹层时把锚点快照下来：此时鼠标已移到按钮上，
+                // 锚点取的是它离开单元格前最后停留（或点击/聚焦）的列 / 行
+                if (next) {
+                  setInsertAnchor({ colId: anchorColRef.current, rowId: anchorRowRef.current })
+                }
                 setMultiOpen(null); setToolPop(null)
               }}
               icon={<Plus size={14} />}
@@ -389,6 +472,10 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
             />
             {insertPop && insertPos && (
               <Popover fixed pos={insertPos} onClose={() => { setInsertPop(false); setInsertPos(null) }}>
+                {/* 插入位置提示：有锚点时说明相对哪一列/行插入，否则退化到边缘 */}
+                <div style={{ fontSize: '11px', color: C.textMuted, marginBottom: '6px', lineHeight: 1.5 }}>
+                  {insertHintText}
+                </div>
                 {/* 方向选择 */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginBottom: '8px' }}>
                   {[
@@ -466,8 +553,11 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                 <button
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
-                    if (insertDir === 'top' || insertDir === 'bottom') insertRows(insertCount, insertDir)
-                    else insertColumns(insertCount, insertDir)
+                    if (insertDir === 'top' || insertDir === 'bottom') {
+                      insertRows(insertCount, insertDir, insertAnchor.rowId)
+                    } else {
+                      insertColumns(insertCount, insertDir, insertAnchor.colId)
+                    }
                     setInsertPop(false); setInsertPos(null)
                   }}
                   style={{
@@ -634,6 +724,8 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                 {columns.map((c) => (
                   <th
                     key={c.id}
+                    onMouseEnter={() => { anchorColRef.current = c.id }}
+                    onMouseDown={() => { anchorColRef.current = c.id }}
                     style={{
                       width: c.width ?? DEFAULT_COL_WIDTH,
                       minWidth: c.width ?? DEFAULT_COL_WIDTH,
@@ -764,6 +856,9 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                     <td
                       key={c.id}
                       className={hl === 'current' ? 'search-current' : hl === 'match' ? 'search-match' : undefined}
+                      onMouseEnter={() => { anchorColRef.current = c.id; anchorRowRef.current = r.id }}
+                      onMouseDown={() => { anchorColRef.current = c.id; anchorRowRef.current = r.id }}
+                      onFocus={() => { anchorColRef.current = c.id; anchorRowRef.current = r.id }}
                       style={{
                         width: c.width ?? DEFAULT_COL_WIDTH,
                         minWidth: c.width ?? DEFAULT_COL_WIDTH,
