@@ -288,6 +288,28 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
     commit(nextCols, nextRows)
   }
 
+  /** 正在拖动的列 id（拖动列头改变列顺序） */
+  const [dragColId, setDragColId] = useState<string | null>(null)
+  /** 当前悬停的落点：在 columns 数组中的插入下标，0..columns.length；null = 无有效落点 */
+  const [dropIndex, setDropIndex] = useState<number | null>(null)
+
+  /**
+   * 把列移动到指定位置。
+   * @param targetIndex 落点在**原数组**中的插入下标；移除源列后需相应前移一位
+   *
+   * 行数据无需改动：单元格是 `{ [colId]: value }` 字典，与列顺序无关。
+   */
+  const moveColumn = (colId: string, targetIndex: number) => {
+    const from = columns.findIndex((c) => c.id === colId)
+    if (from < 0) return
+    const at = from < targetIndex ? targetIndex - 1 : targetIndex
+    if (at === from) return
+    const next = columns.slice()
+    const [moved] = next.splice(from, 1)
+    next.splice(at, 0, moved)
+    commit(next, rows)
+  }
+
   const deleteColumn = (colId: string) => {
     const nextCols = columns.filter((c) => c.id !== colId)
     const nextRows = rows.map((r) => {
@@ -770,11 +792,34 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                     zIndex: 11,
                   }}
                 />
-                {columns.map((c) => (
+                {columns.map((c, ci) => {
+                  // 落点指示：左边界高亮 = 插到本列左侧；最后一列的右边界高亮 = 插到末尾
+                  const lineLeft = dropIndex === ci && dragColId !== null
+                  const lineRight =
+                    dropIndex === ci + 1 && ci === columns.length - 1 && dragColId !== null
+                  return (
                   <th
                     key={c.id}
                     onMouseEnter={() => scheduleAnchor(c.id, anchorRowRef.current)}
                     onMouseDown={() => pinAnchor(c.id, anchorRowRef.current)}
+                    onDragOver={(e) => {
+                      if (!dragColId) return
+                      // 必须阻止默认行为，否则浏览器不允许放置
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      const before = e.clientX < rect.left + rect.width / 2
+                      setDropIndex(before ? ci : ci + 1)
+                    }}
+                    onDrop={(e) => {
+                      if (!dragColId) return
+                      e.preventDefault()
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      const before = e.clientX < rect.left + rect.width / 2
+                      moveColumn(dragColId, before ? ci : ci + 1)
+                      setDragColId(null)
+                      setDropIndex(null)
+                    }}
                     style={{
                       width: c.width ?? DEFAULT_COL_WIDTH,
                       minWidth: c.width ?? DEFAULT_COL_WIDTH,
@@ -786,9 +831,36 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                       textAlign: 'left',
                       position: 'relative',
                       whiteSpace: 'nowrap',
+                      opacity: dragColId === c.id ? 0.45 : 1,
+                      boxShadow: lineLeft
+                        ? `inset 3px 0 0 ${C.primary}`
+                        : lineRight
+                          ? `inset -3px 0 0 ${C.primary}`
+                          : undefined,
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', height: '38px', padding: '0 8px', gap: '4px', overflow: 'hidden' }}>
+                      {/* 列顺序拖动手柄：只有按住它才触发拖动，避免影响列名编辑与列宽拖拽 */}
+                      <div
+                        draggable
+                        className={`du-col-grip${dragColId === c.id ? ' dragging' : ''}`}
+                        title="拖动调整列顺序"
+                        onDragStart={(e) => {
+                          setDragColId(c.id)
+                          e.dataTransfer.effectAllowed = 'move'
+                          // 部分浏览器要求必须写入数据，否则 dragstart 会被取消
+                          try { e.dataTransfer.setData('text/plain', c.id) } catch { /* 忽略 */ }
+                        }}
+                        onDragEnd={() => {
+                          setDragColId(null)
+                          setDropIndex(null)
+                        }}
+                        // 阻止手柄上的鼠标事件冒泡到 th，避免与列宽拖拽 / 锚点逻辑相互干扰
+                        onMouseDown={(e) => e.stopPropagation()}
+                        style={{ display: 'flex', alignItems: 'center', flex: 'none' }}
+                      >
+                        <GripVertical size={12} />
+                      </div>
                       <ImeTextField
                         value={c.name}
                         onChange={(v) => renameColumn(c.id, v)}
@@ -850,7 +922,8 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                       </Popover>
                     )}
                   </th>
-                ))}
+                  )
+                })}
                 {columns.length === 0 && (
                   <th style={{ padding: '10px', color: C.textMuted, background: C.bg, borderBottom: `2px solid ${C.border}` }}>
                     暂无列，点击「+ 列」添加

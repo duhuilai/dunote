@@ -241,6 +241,24 @@ input, select, textarea { font-family: inherit; }
 .du-data-table th .du-table-resize:hover {
   background: rgba(37, 99, 235, 0.25);
 }
+/* 列顺序拖动手柄：默认淡显，悬停列头时加深；拖动中始终保持可见 */
+.du-data-table th .du-col-grip {
+  color: #64748B;
+  opacity: 0.35;
+  cursor: grab;
+  transition: opacity 0.15s;
+  user-select: none;
+}
+.du-data-table th:hover .du-col-grip {
+  opacity: 0.75;
+}
+.du-data-table th .du-col-grip:active {
+  cursor: grabbing;
+}
+.du-data-table th .du-col-grip.dragging {
+  opacity: 1;
+  color: #2563EB;
+}
 
 /* ─── 检索高亮 ─── */
 .tiptap .search-match {
