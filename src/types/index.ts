@@ -8,6 +8,8 @@ export interface Note {
   tags: string[];
   createdAt: string;
   updatedAt: string;
+  /** 是否固定到列表顶部（固定状态不改变最近修改时间） */
+  pinned?: boolean;
   noteType?: string;
   /** 手动排序序号（越小越靠前），未设置时按文件名排序 */
   order?: number;
@@ -86,12 +88,28 @@ export interface SyncConfig {
   token: string;
 }
 
+export type AiApiProtocol = 'chat-completions' | 'responses'
+
+export interface AiConfig {
+  enabled: boolean
+  providerName: string
+  baseUrl: string
+  apiKey: string
+  apiProtocol: AiApiProtocol
+  chatModel: string
+  transcriptionModel: string
+  supportsChat: boolean
+  supportsTranscription: boolean
+  requestTimeoutMs: number
+}
+
 export interface AppSettings {
   language: 'zh-CN' | 'en' | 'ja';
   syncConfig: SyncConfig;
+  aiConfig: AiConfig;
   customColors: Record<string, string>;
-  theme: 'light' | 'dark';
+  theme: 'light' | 'dark' | 'system';
 }
 
 /* ─── Navigation ─── */
-export type PageKey = 'notes' | 'personnel' | 'tasks' | 'analytics' | 'settings';
+export type PageKey = 'notes' | 'ai' | 'personnel' | 'tasks' | 'analytics' | 'settings';

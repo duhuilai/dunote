@@ -14,15 +14,15 @@ import { subscribeSearchBroadcast, getSearchBroadcast } from '@/extensions/searc
 
 /* ─── 颜色令牌 ─── */
 const C = {
-  primary: '#2563EB',
-  primaryLight: 'rgba(37,99,235,0.1)',
-  border: '#E2E8F0',
-  text: '#1E293B',
-  textSecondary: '#64748B',
-  textMuted: '#94A3B8',
-  surface: '#FFFFFF',
-  bg: '#F8FAFC',
-  danger: '#EF4444',
+  primary: 'var(--app-primary)',
+  primaryLight: 'var(--app-primary-light)',
+  border: 'var(--app-border)',
+  text: 'var(--app-text)',
+  textSecondary: 'var(--app-text-secondary)',
+  textMuted: 'var(--app-text-muted)',
+  surface: 'var(--app-surface-elevated)',
+  bg: 'var(--app-bg)',
+  danger: 'var(--app-danger)',
 }
 
 const MIN_COL_WIDTH = 80
@@ -389,7 +389,7 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
           if (f.mode === 'lt') return n < target
           if (f.mode === 'lte') return n <= target
         }
-        const s = cellToText(v, t)
+        const s = cellToText(v)
         if (f.mode === 'equals') return s === f.value
         return s.toLowerCase().includes(f.value.toLowerCase())
       })
@@ -634,7 +634,7 @@ export function DataTableView({ node, updateAttributes }: NodeViewProps) {
                     borderRadius: '6px',
                     border: 'none',
                     background: C.primary,
-                    color: '#fff',
+                    color: 'var(--app-on-primary)',
                     fontSize: '12px',
                     fontWeight: 500,
                     cursor: 'pointer',
@@ -1334,7 +1334,7 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
     cursor: 'pointer',
     fontFamily: 'inherit',
     background: active ? C.primary : 'transparent',
-    color: active ? '#fff' : isToday ? C.primary : C.text,
+    color: active ? 'var(--app-on-primary)' : isToday ? C.primary : C.text,
     fontWeight: active || isToday ? 600 : 400,
   })
 
@@ -1365,7 +1365,7 @@ function DateField({ value, onChange }: { value: string; onChange: (v: string) =
             background: C.surface,
             border: `1px solid ${C.border}`,
             borderRadius: '10px',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.16)',
+            boxShadow: 'var(--app-shadow)',
             padding: '10px',
             width: '248px',
             fontFamily: 'inherit',
@@ -1589,6 +1589,7 @@ function CellEditor({
   onToggleMulti: () => void
 }) {
   const t = column.type
+  const [text, setText] = useState('')
 
   if (t === 'checkbox') {
     return (
@@ -1609,7 +1610,7 @@ function CellEditor({
           <span
             key={i}
             onClick={() => onChange(i === n ? 0 : i)}
-            style={{ cursor: 'pointer', color: i <= n ? '#F59E0B' : C.border, fontSize: '16px', lineHeight: 1 }}
+            style={{ cursor: 'pointer', color: i <= n ? 'var(--app-warning)' : C.border, fontSize: '16px', lineHeight: 1 }}
           >
             ★
           </span>
@@ -1632,7 +1633,6 @@ function CellEditor({
   if (t === 'multiSelect' || t === 'person') {
     const arr = Array.isArray(value) ? (value as string[]) : []
     const suggestions = column.options.map((o) => o.label)
-    const [text, setText] = useState('')
     const addTag = (label: string) => {
       const v = label.trim()
       if (!v || arr.includes(v)) return
@@ -1680,7 +1680,7 @@ function CellEditor({
               background: C.surface,
               border: `1px solid ${C.border}`,
               borderRadius: '8px',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+              boxShadow: 'var(--app-shadow)',
               padding: '6px',
               minWidth: '180px',
             }}
@@ -1813,7 +1813,7 @@ function CellEditor({
 }
 
 /* ─── 工具函数 ─── */
-function cellToText(v: CellValue, t: FieldType): string {
+function cellToText(v: CellValue): string {
   if (v === null || v === undefined) return ''
   if (typeof v === 'boolean') return v ? '是' : ''
   if (Array.isArray(v)) return v.join(',')
@@ -1834,7 +1834,7 @@ function compareValues(a: CellValue, b: CellValue, t: FieldType): number {
   }
   if (t === 'rating') return (Number(a) || 0) - (Number(b) || 0)
   if (t === 'checkbox') return a ? 1 : -1
-  return cellToText(a, t).localeCompare(cellToText(b, t), 'zh-Hans-CN')
+  return cellToText(a).localeCompare(cellToText(b), 'zh-Hans-CN')
 }
 
 /* ─── Popover ─── */
@@ -1868,7 +1868,7 @@ function Popover({
         background: C.surface,
         border: `1px solid ${C.border}`,
         borderRadius: '8px',
-        boxShadow: '0 6px 18px rgba(0,0,0,0.14)',
+        boxShadow: 'var(--app-shadow)',
         padding: '8px',
         minWidth: '160px',
       }}
@@ -1929,23 +1929,6 @@ const miniBtn: React.CSSProperties = {
   fontSize: '11px',
 }
 
-const menuItemStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  width: '100%',
-  padding: '6px 8px',
-  border: 'none',
-  background: 'transparent',
-  cursor: 'pointer',
-  fontSize: '13px',
-  color: C.text,
-  fontFamily: 'inherit',
-  textAlign: 'left',
-  borderRadius: '4px',
-  transition: 'background 0.12s',
-}
-
 const iconBtn: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
@@ -1990,7 +1973,7 @@ const pillStyle = (color?: string): React.CSSProperties => ({
   fontSize: '11px',
   padding: '1px 6px',
   borderRadius: '999px',
-  background: (color || C.textMuted) + '20',
+  background: `color-mix(in srgb, ${color || C.textMuted} 14%, transparent)`,
   color: color || C.textMuted,
   display: 'inline-flex',
   alignItems: 'center',

@@ -5,14 +5,14 @@
 import type { Column, Row, CellValue } from '@/components/table/fieldTypes'
 
 const COLOR = {
-  border: '#E2E8F0',
-  bg: '#F8FAFC',
-  surface: '#FFFFFF',
-  text: '#1E293B',
-  textMuted: '#94A3B8',
-  primary: '#2563EB',
-  success: '#10B981',
-  warning: '#F59E0B',
+  border: 'var(--app-border)',
+  bg: 'var(--app-bg)',
+  surface: 'var(--app-surface-elevated)',
+  text: 'var(--app-text)',
+  textMuted: 'var(--app-text-muted)',
+  primary: 'var(--app-primary)',
+  success: 'var(--app-success)',
+  warning: 'var(--app-warning)',
 }
 
 export function renderDataTablesInHTML(html: string): string {
@@ -44,7 +44,7 @@ export function renderDataTablesInHTML(html: string): string {
 }
 
 function generateStaticTableHTML(columns: Column[], rows: Row[]): string {
-  const { border, bg, surface, text, textMuted, primary } = COLOR
+  const { border, bg, surface, text, textMuted } = COLOR
 
   const headerCells = columns
     .map(
@@ -82,7 +82,7 @@ function cellToStaticHTML(column: Column, value: CellValue): string {
   const t = column.type
 
   if (value === null || value === undefined || value === '') {
-    if (t === 'checkbox') return '<span style="color:#CBD5E1;">&#9744;</span>'
+    if (t === 'checkbox') return `<span style="color:${textMuted};">&#9744;</span>`
     return `<span style="color:${textMuted};">&mdash;</span>`
   }
 
@@ -90,7 +90,7 @@ function cellToStaticHTML(column: Column, value: CellValue): string {
     case 'checkbox':
       return value
         ? `<span style="color:${success};font-weight:600;">&#10003;</span>`
-        : '<span style="color:#CBD5E1;">&#9744;</span>'
+        : `<span style="color:${textMuted};">&#9744;</span>`
 
     case 'rating': {
       const n = typeof value === 'number' ? value : 0
@@ -115,7 +115,7 @@ function cellToStaticHTML(column: Column, value: CellValue): string {
     case 'select': {
       const opt = column.options.find((o) => o.label === value)
       const color = opt?.color || textMuted
-      return `<span style="display:inline-flex;align-items:center;font-size:11px;padding:1px 8px;border-radius:999px;background:${color}20;color:${color};font-weight:500;">${escapeHTML(String(value))}</span>`
+      return `<span style="display:inline-flex;align-items:center;font-size:11px;padding:1px 8px;border-radius:999px;background:color-mix(in srgb, ${color} 16%, transparent);color:${color};font-weight:500;">${escapeHTML(String(value))}</span>`
     }
 
     case 'multiSelect':
@@ -126,7 +126,7 @@ function cellToStaticHTML(column: Column, value: CellValue): string {
         .map((label) => {
           const opt = column.options.find((o) => o.label === label)
           const color = opt?.color || textMuted
-          return `<span style="display:inline-flex;align-items:center;font-size:11px;padding:1px 8px;border-radius:999px;background:${color}20;color:${color};font-weight:500;margin-right:4px;margin-bottom:2px;">${escapeHTML(label)}</span>`
+          return `<span style="display:inline-flex;align-items:center;font-size:11px;padding:1px 8px;border-radius:999px;background:color-mix(in srgb, ${color} 16%, transparent);color:${color};font-weight:500;margin-right:4px;margin-bottom:2px;">${escapeHTML(label)}</span>`
         })
         .join('')
     }

@@ -40,3 +40,7 @@ Thumbs.db
 
 # WorkBuddy project data (not source code)
 .workbuddy/
+
+# Local verification output
+/artifacts/
+/$null

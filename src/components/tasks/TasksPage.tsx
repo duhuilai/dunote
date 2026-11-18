@@ -8,21 +8,21 @@ import DateField from '@/components/ui/DateField'
 import { Clock, CheckCircle2, AlertCircle, User, Calendar, Users as UsersIcon, X, Star, Plus, Trash2, ArrowUpDown, ArrowUp, ArrowDown, ChevronUp, ChevronDown } from 'lucide-react'
 
 const colors = {
-  primary: '#2563EB',
-  primaryHover: '#1D4ED8',
-  primaryLight: 'rgba(37,99,235,0.1)',
-  bg: '#F8FAFC',
-  border: '#E2E8F0',
-  text: '#1E293B',
-  textSecondary: '#64748B',
-  textMuted: '#94A3B8',
-  success: '#10B981',
-  successHover: '#059669',
-  successLight: '#ECFDF5',
-  warning: '#F59E0B',
-  warningLight: '#FFFBEB',
-  danger: '#EF4444',
-  surface: '#FFFFFF',
+  primary: 'var(--app-primary)',
+  primaryHover: 'var(--app-primary-hover)',
+  primaryLight: 'var(--app-primary-light)',
+  bg: 'var(--app-bg)',
+  border: 'var(--app-border)',
+  text: 'var(--app-text)',
+  textSecondary: 'var(--app-text-secondary)',
+  textMuted: 'var(--app-text-muted)',
+  success: 'var(--app-success)',
+  successHover: 'var(--app-success)',
+  successLight: 'var(--app-success-bg)',
+  warning: 'var(--app-warning)',
+  warningLight: 'var(--app-warning-bg)',
+  danger: 'var(--app-danger)',
+  surface: 'var(--app-surface)',
 }
 
 // 与 DateField 组件共享的配色（中文日期选择器，与人员管理一致）
@@ -38,7 +38,7 @@ const dateFieldColors = {
 
 const statusConfig = {
   pending: { label: '待开始', icon: AlertCircle, color: colors.warning, bg: colors.warningLight },
-  running: { label: '进行中', icon: Clock, color: colors.primary, bg: '#EFF6FF' },
+  running: { label: '进行中', icon: Clock, color: colors.primary, bg: 'var(--app-info-bg)' },
   completed: { label: '已完成', icon: CheckCircle2, color: colors.success, bg: colors.successLight },
 }
 
@@ -282,7 +282,7 @@ export default function TasksPage() {
               })
               setShowCreate(true)
             }}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: 'var(--app-on-primary)', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
           >
             <Plus size={15} />
             新建任务
@@ -290,12 +290,13 @@ export default function TasksPage() {
         </div>
         {/* Tabs + 按人员筛选 */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: '4px', background: colors.bg, borderRadius: '8px', padding: '4px' }}>
+          <div className="task-filter-tabs" style={{ display: 'flex', gap: '4px', background: colors.bg, borderRadius: '8px', padding: '4px' }}>
             {tabs.map((tab) => {
               const isActive = filter === tab.key
               return (
                 <button
                   key={tab.key}
+                  className="task-filter-tab"
                   onClick={() => setFilter(tab.key)}
                   style={{
                     display: 'flex',
@@ -318,7 +319,7 @@ export default function TasksPage() {
                     fontSize: '11px',
                     padding: '2px 6px',
                     borderRadius: '9999px',
-                    background: isActive ? colors.primaryLight : '#F1F5F9',
+                    background: isActive ? colors.primaryLight : 'var(--app-surface-muted)',
                     color: isActive ? colors.primary : colors.textMuted,
                   }}>{tab.count}</span>
                 </button>
@@ -334,7 +335,7 @@ export default function TasksPage() {
               <ArrowUpDown size={14} />
               排序
               {sortRules.length > 0 && (
-                <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '9999px', background: colors.primary, color: '#fff' }}>{sortRules.length}</span>
+                <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '9999px', background: colors.primary, color: 'var(--app-on-primary)' }}>{sortRules.length}</span>
               )}
             </button>
             <User size={14} style={{ color: colors.textMuted }} />
@@ -356,7 +357,7 @@ export default function TasksPage() {
       {sortOpen && createPortal(
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onMouseDown={() => { setSortOpen(false); setAddMenuOpen(false) }} />
-          <div style={{ position: 'fixed', top: sortPos.top, left: sortPos.left, zIndex: 41, width: '300px', background: colors.surface, borderRadius: '12px', border: `1px solid ${colors.border}`, boxShadow: '0 10px 30px rgba(0,0,0,0.12)', padding: '14px' }}>
+          <div style={{ position: 'fixed', top: sortPos.top, left: sortPos.left, zIndex: 41, width: '300px', maxWidth: 'calc(100vw - 24px)', background: colors.surface, borderRadius: '12px', border: `1px solid ${colors.border}`, boxShadow: 'var(--app-shadow)', padding: '14px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
               <span style={{ fontSize: '13px', fontWeight: 600, color: colors.text }}>排序规则</span>
               {sortRules.length > 0 && (
@@ -444,7 +445,7 @@ export default function TasksPage() {
             const cfg = statusConfig[t.status]
             const StatusIcon = cfg.icon
             const overdue = isOverdue(t)
-            const progressColor = overdue ? colors.danger : t.status === 'completed' ? colors.success : t.status === 'running' ? colors.primary : '#E2E8F0'
+            const progressColor = overdue ? colors.danger : t.status === 'completed' ? colors.success : t.status === 'running' ? colors.primary : colors.border
             return (
               <div
                 key={t.id}
@@ -458,7 +459,7 @@ export default function TasksPage() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     {overdue && (
-                      <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 600, background: colors.danger, color: '#fff' }}>
+                      <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 600, background: colors.danger, color: 'var(--app-on-primary)' }}>
                         超期
                       </span>
                     )}
@@ -466,7 +467,7 @@ export default function TasksPage() {
                       onClick={(e) => { e.stopPropagation(); handleDelete(t.id) }}
                       title="删除任务"
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', borderRadius: '6px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.1)' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--app-danger-bg)' }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                     >
                       <Trash2 size={15} style={{ color: colors.textMuted }} />
@@ -505,14 +506,14 @@ export default function TasksPage() {
       {/* Task Detail Modal */}
       {task && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => { setSelectedTask(null); setEvalForm({ evaluation: '', score: 0 }); setIsEditing(false) }} />
-          <div style={{ position: 'relative', background: colors.surface, borderRadius: '16px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', width: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'var(--app-overlay)' }} onClick={() => { setSelectedTask(null); setEvalForm({ evaluation: '', score: 0 }); setIsEditing(false) }} />
+          <div style={{ position: 'relative', background: colors.surface, borderRadius: '16px', boxShadow: 'var(--app-shadow)', width: '600px', maxWidth: 'calc(100vw - 32px)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `1px solid ${colors.border}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {(() => { const I = statusConfig[task.status].icon; return <I size={18} style={{ color: statusConfig[task.status].color }} /> })()}
                 <h3 style={{ fontSize: '16px', fontWeight: 600, color: colors.text, margin: 0 }}>{task.name}</h3>
                 {isOverdue(task) && (
-                  <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 600, background: colors.danger, color: '#fff' }}>
+                  <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '10px', fontWeight: 600, background: colors.danger, color: 'var(--app-on-primary)' }}>
                     超期
                   </span>
                 )}
@@ -640,7 +641,7 @@ export default function TasksPage() {
                     <button
                       onClick={handleSaveEdit}
                       disabled={!editForm.name.trim()}
-                      style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: editForm.name.trim() ? colors.primary : colors.textMuted, color: '#fff', fontSize: '13px', fontWeight: 500, cursor: editForm.name.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}
+                      style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: editForm.name.trim() ? colors.primary : colors.textMuted, color: editForm.name.trim() ? 'var(--app-on-primary)' : 'var(--app-surface)', fontSize: '13px', fontWeight: 500, cursor: editForm.name.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}
                     >
                       保存
                     </button>
@@ -682,7 +683,7 @@ export default function TasksPage() {
 
                   {/* Evaluation (for completed tasks) */}
                   {task.status === 'completed' && task.evaluation && (
-                    <div style={{ padding: '16px', background: colors.successLight, borderRadius: '12px', border: `1px solid #A7F3D0` }}>
+                    <div style={{ padding: '16px', background: colors.successLight, borderRadius: '12px', border: '1px solid var(--app-success-border)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                         <Star size={14} style={{ color: colors.warning }} />
                         <span style={{ fontSize: '12px', fontWeight: 600, color: colors.text }}>评价</span>
@@ -715,7 +716,7 @@ export default function TasksPage() {
                           />
                           <span style={{ fontSize: '14px', fontWeight: 700, color: colors.primary, width: '40px', textAlign: 'right' }}>{evalForm.score}</span>
                         </div>
-                        <button onClick={handleComplete} style={{ width: '100%', padding: '10px', borderRadius: '8px', background: colors.success, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+                        <button onClick={handleComplete} style={{ width: '100%', padding: '10px', borderRadius: '8px', background: colors.success, color: 'var(--app-on-primary)', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
                           确认完成
                         </button>
                       </div>
@@ -731,8 +732,8 @@ export default function TasksPage() {
       {/* Create Task Modal */}
       {showCreate && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => setShowCreate(false)} />
-          <div style={{ position: 'relative', background: colors.surface, borderRadius: '16px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', width: '600px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'var(--app-overlay)' }} onClick={() => setShowCreate(false)} />
+          <div style={{ position: 'relative', background: colors.surface, borderRadius: '16px', boxShadow: 'var(--app-shadow)', width: '600px', maxWidth: 'calc(100vw - 32px)', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `1px solid ${colors.border}` }}>
               <h3 style={{ fontSize: '16px', fontWeight: 600, color: colors.text, margin: 0 }}>新建任务</h3>
               <button onClick={() => setShowCreate(false)} style={{ padding: '4px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>
@@ -840,7 +841,7 @@ export default function TasksPage() {
               <button
                 onClick={handleCreate}
                 disabled={!createForm.name.trim()}
-                style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: createForm.name.trim() ? colors.primary : colors.textMuted, color: '#fff', fontSize: '13px', fontWeight: 500, cursor: createForm.name.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}
+                style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: createForm.name.trim() ? colors.primary : colors.textMuted, color: createForm.name.trim() ? 'var(--app-on-primary)' : 'var(--app-surface)', fontSize: '13px', fontWeight: 500, cursor: createForm.name.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit' }}
               >
                 创建
               </button>

@@ -15,14 +15,15 @@ import { pickImageFile } from '@/utils/imageEmbed'
 
 /* ─── Color Tokens ─── */
 const C = {
-  primary: '#2563EB',
-  primaryLight: 'rgba(37,99,235,0.1)',
-  border: '#E2E8F0',
-  text: '#1E293B',
-  textSecondary: '#64748B',
-  textMuted: '#94A3B8',
-  surface: '#FFFFFF',
-  bg: '#F8FAFC',
+  primary: 'var(--app-primary)',
+  primaryLight: 'var(--app-primary-light)',
+  primaryLightHover: 'var(--app-primary-light-hover)',
+  border: 'var(--app-border)',
+  text: 'var(--app-text)',
+  textSecondary: 'var(--app-text-secondary)',
+  textMuted: 'var(--app-text-muted)',
+  surface: 'var(--app-surface-elevated)',
+  bg: 'var(--app-bg)',
 } as const
 
 /* ─── Command Items ─── */
@@ -220,7 +221,7 @@ const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>((props, ref) => {
       style={{
         background: C.surface,
         borderRadius: '10px',
-        boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+        boxShadow: 'var(--app-shadow)',
         border: `1px solid ${C.border}`,
         padding: '6px',
         width: '240px',
@@ -267,7 +268,7 @@ const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>((props, ref) => {
                 alignItems: 'center',
                 justifyContent: 'center',
                 background: isActive ? C.primaryLight : C.bg,
-                border: `1px solid ${isActive ? 'rgba(37,99,235,0.15)' : C.border}`,
+                border: `1px solid ${isActive ? C.primaryLightHover : C.border}`,
                 flexShrink: 0,
               }}
             >

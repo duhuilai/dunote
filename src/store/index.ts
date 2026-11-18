@@ -4,6 +4,7 @@ import type { UpdateInfo, UpdateDownloadState } from '@/utils/update';
 import { initialUpdateDownload } from '@/utils/update';
 import { defaultSettings, loadSettings, saveSettings } from '@/utils/settingsStorage';
 import { savePersonnel, saveTasks } from '@/utils/storage';
+import { loadNotesData, saveNotesData } from '@/utils/notesStorage';
 
 /**
  * 生成唯一 id。优先 crypto.randomUUID（安全上下文可用），
@@ -31,6 +32,9 @@ interface AppState {
   // Notes
   notes: Note[];
   folders: NoteFolder[];
+  notesHydrated: boolean;
+  notesLoadError: string | null;
+  notesSaveStatus: 'loading' | 'dirty' | 'saving' | 'saved' | 'error';
   selectedNoteId: string | null;
   selectedFolderId: string | null;
   searchQuery: string;
@@ -45,7 +49,14 @@ interface AppState {
   setShowOutline: (show: boolean) => void;
   addNote: (note: Note) => void;
   updateNote: (id: string, updates: Partial<Note>) => void;
+  setNotePinned: (id: string, pinned: boolean) => void;
   deleteNote: (id: string) => void;
+  addFolder: (folder: NoteFolder) => void;
+  updateFolder: (id: string, updates: Partial<NoteFolder>) => void;
+  deleteFolder: (id: string) => void;
+  hydrateNotes: () => Promise<void>;
+  flushNotes: () => Promise<void>;
+  markNotesDirty: () => void;
   addHistoryEntry: (entry: Omit<NoteHistory, 'id' | 'timestamp'>) => void;
   /** 用 git 历史版本列表整体替换当前历史（备份改用 git 后使用） */
   setHistory: (list: NoteHistory[]) => void;
@@ -99,6 +110,84 @@ interface AppState {
   setLocalRootFolder: (p: string | null) => void;
 }
 
+const NOTES_SAVE_DELAY = 650
+let notesChangeRevision = 0
+let notesSaveTimer: ReturnType<typeof setTimeout> | null = null
+let notesSavePromise: Promise<void> | null = null
+let notesSaveRequested = false
+let notesHydrationPromise: Promise<void> | null = null
+
+function scheduleNotesSave() {
+  if (notesSaveTimer) clearTimeout(notesSaveTimer)
+  notesSaveTimer = setTimeout(() => {
+    notesSaveTimer = null
+    void persistLatestNotes().catch((error) => {
+      console.error('[Notes] 自动保存失败:', error)
+    })
+  }, NOTES_SAVE_DELAY)
+}
+
+function requestNotesSave(): void {
+  notesSaveRequested = true
+  scheduleNotesSave()
+}
+
+function markNotesDirty(): void {
+  const state = useAppStore.getState()
+  if (!state.notesHydrated) return
+
+  notesChangeRevision++
+  if (state.notesSaveStatus !== 'saving') {
+    useAppStore.setState({ notesSaveStatus: 'dirty' })
+  }
+  requestNotesSave()
+}
+
+async function persistLatestNotes(): Promise<void> {
+  if (notesSaveTimer) {
+    clearTimeout(notesSaveTimer)
+    notesSaveTimer = null
+  }
+
+  const current = useAppStore.getState()
+  if (!current.notesHydrated) return
+  if (current.notesSaveStatus === 'saved' && !notesSaveRequested && !notesSavePromise) return
+
+  if (notesSavePromise) {
+    notesSaveRequested = true
+    await notesSavePromise
+    if (notesSaveRequested) await persistLatestNotes()
+    return
+  }
+
+  notesSavePromise = (async () => {
+    while (true) {
+      notesSaveRequested = false
+      const state = useAppStore.getState()
+      if (!state.notesHydrated) return
+
+      const revision = notesChangeRevision
+      useAppStore.setState({ notesSaveStatus: 'saving' })
+      try {
+        await saveNotesData({ notes: state.notes, folders: state.folders })
+      } catch (error) {
+        useAppStore.setState({ notesSaveStatus: 'error' })
+        throw error
+      }
+
+      if (notesSaveRequested || notesChangeRevision !== revision) continue
+      useAppStore.setState({ notesSaveStatus: 'saved' })
+      return
+    }
+  })()
+
+  try {
+    await notesSavePromise
+  } finally {
+    notesSavePromise = null
+    if (notesSaveRequested) await persistLatestNotes()
+  }
+}
 
 export const useAppStore = create<AppState>((set) => ({
   // Navigation
@@ -110,6 +199,9 @@ export const useAppStore = create<AppState>((set) => ({
   // Notes
   notes: [],
   folders: [],
+  notesHydrated: false,
+  notesLoadError: null,
+  notesSaveStatus: 'loading',
   selectedNoteId: null,
   selectedFolderId: null,
   searchQuery: '',
@@ -122,14 +214,108 @@ export const useAppStore = create<AppState>((set) => ({
   setSearchQuery: (q) => set({ searchQuery: q }),
   setShowHistory: (show) => set({ showHistory: show }),
   setShowOutline: (show) => set({ showOutline: show }),
-  addNote: (note) => set((s) => ({ notes: [note, ...s.notes] })),
-  updateNote: (id, updates) => set((s) => ({
-    notes: s.notes.map((n) => (n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n)),
-  })),
-  deleteNote: (id) => set((s) => ({
-    notes: s.notes.filter((n) => n.id !== id),
-    selectedNoteId: s.selectedNoteId === id ? null : s.selectedNoteId,
-  })),
+  addNote: (note) => {
+    set((s) => ({ notes: [note, ...s.notes] }))
+    markNotesDirty()
+  },
+  updateNote: (id, updates) => {
+    set((s) => ({
+      notes: s.notes.map((n) => (n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n)),
+    }))
+    markNotesDirty()
+  },
+  setNotePinned: (id, pinned) => {
+    set((s) => ({
+      notes: s.notes.map((n) => (n.id === id ? { ...n, pinned } : n)),
+    }))
+    markNotesDirty()
+  },
+  deleteNote: (id) => {
+    set((s) => ({
+      notes: s.notes.filter((n) => n.id !== id),
+      selectedNoteId: s.selectedNoteId === id ? null : s.selectedNoteId,
+    }))
+    markNotesDirty()
+  },
+  addFolder: (folder) => {
+    set((s) => ({ folders: [folder, ...s.folders] }))
+    markNotesDirty()
+  },
+  updateFolder: (id, updates) => {
+    set((s) => ({
+      folders: s.folders.map((folder) => (
+        folder.id === id ? { ...folder, ...updates } : folder
+      )),
+    }))
+    markNotesDirty()
+  },
+  deleteFolder: (id) => {
+    set((s) => {
+      const removedIds = new Set<string>([id])
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const folder of s.folders) {
+          if (folder.parentId && removedIds.has(folder.parentId) && !removedIds.has(folder.id)) {
+            removedIds.add(folder.id)
+            changed = true
+          }
+        }
+      }
+
+      const selectedFolder = s.folders.find((folder) => folder.id === s.selectedFolderId)
+      const fallbackFolderId = selectedFolder && removedIds.has(selectedFolder.id)
+        ? (selectedFolder.parentId && !removedIds.has(selectedFolder.parentId) ? selectedFolder.parentId : null)
+        : s.selectedFolderId
+
+      return {
+        folders: s.folders.filter((folder) => !removedIds.has(folder.id)),
+        notes: s.notes.map((note) => (
+          removedIds.has(note.folderId) ? { ...note, folderId: '' } : note
+        )),
+        selectedFolderId: fallbackFolderId,
+      }
+    })
+    markNotesDirty()
+  },
+  hydrateNotes: async () => {
+    if (useAppStore.getState().notesHydrated) return
+    if (notesHydrationPromise) return notesHydrationPromise
+
+    set({ notesSaveStatus: 'loading', notesLoadError: null })
+    notesHydrationPromise = (async () => {
+      try {
+        const loaded = await loadNotesData()
+        notesChangeRevision = 0
+        notesSaveRequested = false
+        set({
+          notes: loaded.notes,
+          folders: loaded.folders,
+          notesHydrated: true,
+          notesSaveStatus: 'saved',
+          notesLoadError: null,
+        })
+        if (loaded.recoveredFromBackup) {
+          useAppStore.getState().showToast('主笔记数据异常，已从备份恢复', 'info')
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        set({
+          notesHydrated: false,
+          notesSaveStatus: 'error',
+          notesLoadError: message,
+        })
+      }
+    })()
+
+    try {
+      await notesHydrationPromise
+    } finally {
+      notesHydrationPromise = null
+    }
+  },
+  flushNotes: () => persistLatestNotes(),
+  markNotesDirty: () => markNotesDirty(),
   addHistoryEntry: (entry: Omit<NoteHistory, 'id' | 'timestamp'>) => set((s) => ({
     history: [{
       ...entry,
@@ -159,7 +345,7 @@ export const useAppStore = create<AppState>((set) => ({
     // If content is the same, no need to create a new history entry
     const contentChanged = currentNote.content !== historyEntry.content;
     
-    return {
+    const nextState: Pick<AppState, 'notes' | 'history' | 'showHistory'> = {
       notes: s.notes.map((n) => 
         n.id === historyEntry.noteId 
           ? { ...n, content: historyEntry.content, title: historyEntry.title, updatedAt: new Date().toISOString() }
@@ -175,6 +361,8 @@ export const useAppStore = create<AppState>((set) => ({
       }, ...s.history] : s.history,
       showHistory: false,
     };
+    queueMicrotask(markNotesDirty)
+    return nextState
   }),
   deleteHistoryEntry: (historyId: string) => set((s) => ({
     history: s.history.filter((h) => h.id !== historyId),
@@ -245,11 +433,17 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Settings
   settings: defaultSettings,
-  updateSettings: (updates) => set((s) => {
-    const next = { ...s.settings, ...updates }
-    saveSettings(next)
-    return { settings: next }
-  }),
+  updateSettings: (updates) => {
+    const next = { ...useAppStore.getState().settings, ...updates }
+    set({ settings: next })
+    void saveSettings(next).catch((error) => {
+      console.error('保存设置失败:', error)
+      useAppStore.getState().showToast(
+        '设置保存失败：' + (error instanceof Error ? error.message : String(error)),
+        'error',
+      )
+    })
+  },
   loadSettings: async () => {
     const persisted = await loadSettings()
     set({ settings: persisted })

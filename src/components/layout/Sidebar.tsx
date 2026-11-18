@@ -2,42 +2,17 @@ import { useAppStore } from '@/store'
 import type { PageKey } from '@/types'
 import UpdateDownloader from '@/components/update/UpdateDownloader'
 import {
-  FileText, Users, CheckSquare, BarChart3, Settings, ChevronLeft, ChevronRight
+  FileText, Users, CheckSquare, BarChart3, Settings, ChevronLeft, ChevronRight, Sparkles
 } from 'lucide-react'
 
 const navItems: { key: PageKey; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
   { key: 'notes', label: '笔记管理', icon: FileText },
+  { key: 'ai', label: 'AI 工作台', icon: Sparkles },
   { key: 'personnel', label: '人员管理', icon: Users },
   { key: 'tasks', label: '任务管理', icon: CheckSquare },
   { key: 'analytics', label: '分析统计', icon: BarChart3 },
   { key: 'settings', label: '系统设置', icon: Settings },
 ]
-
-const sidebarStyle: React.CSSProperties = {
-  width: 220,
-  minWidth: 220,
-  maxWidth: 220,
-  background: '#F1F5F9',
-  display: 'flex',
-  flexDirection: 'column',
-  flexShrink: 0,
-  userSelect: 'none',
-  height: '100%',
-  transition: 'width 0.3s ease, min-width 0.3s ease, max-width 0.3s ease',
-}
-
-const collapsedSidebarStyle: React.CSSProperties = {
-  width: 64,
-  minWidth: 64,
-  maxWidth: 64,
-  background: '#F1F5F9',
-  display: 'flex',
-  flexDirection: 'column',
-  flexShrink: 0,
-  userSelect: 'none',
-  height: '100%',
-  transition: 'width 0.3s ease, min-width 0.3s ease, max-width 0.3s ease',
-}
 
 export default function Sidebar() {
   const currentPage = useAppStore((s) => s.currentPage)
@@ -45,37 +20,44 @@ export default function Sidebar() {
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed)
   const toggleSidebar = useAppStore((s) => s.toggleSidebar)
   const appVersion = useAppStore((s) => s.appVersion)
-  const updateInfo = useAppStore((s) => s.updateInfo)
 
   return (
-    <div style={sidebarCollapsed ? collapsedSidebarStyle : sidebarStyle}>
+    <aside className={`app-sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
       {/* Logo */}
-      <div style={{ padding: sidebarCollapsed ? '20px 14px 16px' : '20px 20px 16px', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: sidebarCollapsed ? 'center' : 'flex-start' }}>
-          <img 
-            src="/logo.png" 
+      <div
+        className="sidebar-logo"
+        style={{
+          padding: '20px 20px 16px',
+          borderBottom: '1px solid var(--app-sidebar-border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+        }}
+      >
+          <img
+            src="/logo.png"
             alt="duNote"
             style={{
-              width: 36, 
-              height: 36, 
+              width: 36,
+              height: 36,
               borderRadius: 10,
               flexShrink: 0,
               objectFit: 'cover',
             }}
           />
-          {!sidebarCollapsed && (
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 16, color: '#1E293B', lineHeight: 1.2 }}>duNote</div>
-              <div style={{ fontSize: 10, color: '#94A3B8', letterSpacing: 1 }}>NOTE MANAGER</div>
-            </div>
-          )}
-        </div>
+          <div className="sidebar-brand-copy" style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--app-text)', lineHeight: 1.2 }}>duNote</div>
+            <div style={{ fontSize: 10, color: 'var(--app-text-muted)', letterSpacing: 1 }}>NOTE MANAGER</div>
+          </div>
       </div>
 
       {/* Toggle Button */}
       <button
+        className="sidebar-toggle"
         onClick={toggleSidebar}
         title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+        aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+        aria-expanded={!sidebarCollapsed}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -83,29 +65,32 @@ export default function Sidebar() {
           padding: sidebarCollapsed ? '6px 0' : '6px 14px',
           border: 'none',
           background: 'transparent',
-          color: '#94A3B8',
+          color: 'var(--app-text-muted)',
           cursor: 'pointer',
           transition: 'all 0.15s',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.color = '#1E293B'
+          e.currentTarget.style.color = 'var(--app-text)'
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.color = '#94A3B8'
+          e.currentTarget.style.color = 'var(--app-text-muted)'
         }}
       >
         {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
       </button>
 
       {/* Navigation */}
-      <nav style={{ flex: 1, padding: '4px 10px 12px', overflowY: 'auto' }}>
+      <nav className="sidebar-nav" aria-label="主导航" style={{ flex: 1, padding: '4px 10px 12px', overflowY: 'auto' }}>
         {navItems.map(({ key, label, icon: Icon }) => {
           const isActive = currentPage === key
           return (
             <button
               key={key}
+              className="sidebar-nav-button"
               onClick={() => setCurrentPage(key)}
-              title={sidebarCollapsed ? label : undefined}
+              title={label}
+              aria-label={label}
+              aria-current={isActive ? 'page' : undefined}
               style={{
                 width: '100%',
                 display: 'flex',
@@ -114,8 +99,8 @@ export default function Sidebar() {
                 padding: sidebarCollapsed ? '10px 0' : '10px 14px',
                 borderRadius: 8,
                 border: 'none',
-                background: isActive ? 'rgba(37,99,235,0.1)' : 'transparent',
-                color: isActive ? '#2563EB' : '#475569',
+                background: isActive ? 'var(--app-primary-light)' : 'transparent',
+                color: isActive ? 'var(--app-primary)' : 'var(--app-text-secondary)',
                 cursor: 'pointer',
                 fontSize: 14,
                 fontWeight: isActive ? 600 : 400,
@@ -126,14 +111,14 @@ export default function Sidebar() {
                 justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
               }}
               onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.background = '#E2E8F0'
+                if (!isActive) e.currentTarget.style.background = 'var(--app-hover)'
               }}
               onMouseLeave={(e) => {
                 if (!isActive) e.currentTarget.style.background = 'transparent'
               }}
             >
               <Icon size={18} />
-              {!sidebarCollapsed && label}
+              <span className="sidebar-label">{label}</span>
             </button>
           )
         })}
@@ -141,39 +126,37 @@ export default function Sidebar() {
 
       {/* User / Version / Update */}
       <div style={{
-        padding: sidebarCollapsed ? '12px 14px' : '12px 14px',
-        borderTop: '1px solid rgba(0,0,0,0.08)',
-        display: 'flex', 
+        padding: '12px 14px',
+        borderTop: '1px solid var(--app-sidebar-border)',
+        display: 'flex',
         flexDirection: 'column',
         gap: 8,
       }}>
-        <div style={{
-          display: 'flex', 
-          alignItems: 'center', 
+        <div className="sidebar-user" style={{
+          display: 'flex',
+          alignItems: 'center',
           gap: 10,
           justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
         }}>
           <div style={{
             width: 32, height: 32, borderRadius: '50%',
-            background: '#2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 13, fontWeight: 600, color: '#fff',
+            background: 'var(--app-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 13, fontWeight: 600, color: 'var(--app-on-primary)',
             flexShrink: 0,
           }}>
             D
           </div>
-          {!sidebarCollapsed && (
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 500, color: '#1E293B' }}>开发者</div>
-              <div style={{ fontSize: 11, color: '#94A3B8' }}>v{appVersion}</div>
-            </div>
-          )}
+          <div className="sidebar-label" style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--app-text)' }}>开发者</div>
+            <div style={{ fontSize: 11, color: 'var(--app-text-muted)' }}>v{appVersion}</div>
+          </div>
         </div>
 
         {/* 更新提示 */}
-        {!sidebarCollapsed && (
+        <div className="sidebar-update">
           <UpdateDownloader variant="compact" />
-        )}
+        </div>
       </div>
-    </div>
+    </aside>
   )
 }

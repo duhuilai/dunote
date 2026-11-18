@@ -3,14 +3,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
 const defaultColors = {
-  text: '#1E293B',
-  textMuted: '#94A3B8',
-  textSecondary: '#64748B',
-  border: '#E2E8F0',
-  surface: '#FFFFFF',
-  primary: '#2563EB',
-  primaryLight: 'rgba(37,99,235,0.1)',
-  bg: '#F8FAFC',
+  text: 'var(--app-text)',
+  textMuted: 'var(--app-text-muted)',
+  textSecondary: 'var(--app-text-secondary)',
+  border: 'var(--app-border)',
+  surface: 'var(--app-surface-elevated)',
+  primary: 'var(--app-primary)',
+  primaryLight: 'var(--app-primary-light)',
+  bg: 'var(--app-bg)',
 }
 
 type Colors = typeof defaultColors
@@ -132,7 +132,7 @@ export default function DateField({
     cursor: 'pointer',
     fontFamily: 'inherit',
     background: active ? C.primary : 'transparent',
-    color: active ? '#fff' : isToday ? C.primary : C.text,
+    color: active ? 'var(--app-on-primary)' : isToday ? C.primary : C.text,
     fontWeight: active || isToday ? 600 : 400,
   })
 
@@ -160,7 +160,7 @@ export default function DateField({
             background: C.surface,
             border: `1px solid ${C.border}`,
             borderRadius: '10px',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.16)',
+            boxShadow: 'var(--app-shadow)',
             padding: '10px',
             width: '248px',
             fontFamily: 'inherit',

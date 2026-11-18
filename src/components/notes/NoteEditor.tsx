@@ -1,15 +1,15 @@
 import { useEditor, useEditorState, EditorContent, type Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
-import Underline from '@tiptap/extension-underline'
 import Highlight from '@tiptap/extension-highlight'
 import TextAlign from '@tiptap/extension-text-align'
 import Placeholder from '@tiptap/extension-placeholder'
 import Image from '@tiptap/extension-image'
-import Link from '@tiptap/extension-link'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import { DataTable } from '@/extensions/dataTable'
 import { SearchExtension, searchPluginKey } from '@/extensions/search'
+import { WikiLink } from '@/extensions/wikiLink'
+import { WikiLinkSuggestion } from '@/extensions/wikiLinkSuggestion'
 import { ImeGuard, imeGrace, IME_GRACE_MS as GRACE_MS, IME_EXTENDED_GRACE_MS as EXT_GRACE_MS } from '@/extensions/imeGuard'
 import { Table } from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
@@ -20,11 +20,12 @@ import Color from '@tiptap/extension-color'
 import FontFamily from '@tiptap/extension-font-family'
 import { FontSize } from '@/extensions/FontSize'
 import { SlashCommand } from './SlashCommand'
-import { confirm } from '@tauri-apps/plugin-dialog'
+import TagEditor from './TagEditor'
 import { showPrompt } from '@/utils/prompt'
 import { pickImageFile } from '@/utils/imageEmbed'
 import { saveNoteTitle, toRelPath } from '@/utils/noteMeta'
 import { saveSnapshot } from '@/utils/noteSnapshots'
+import { normalizeTagList, sameTags } from '@/utils/noteTags'
 import type { Note } from '@/types'
 
 /**
@@ -33,7 +34,15 @@ import type { Note } from '@/types'
  *   1. 停止操作满本时长（每次编辑都会重置计时器，即「5 秒内没有任何操作」）；
  *   2. 切换文档（由 switch effect 中的 flushPending 立即落盘）。
  */
-const AUTOSAVE_IDLE_MS = 5000
+const AUTOSAVE_IDLE_MS = 1500
+const TITLE_SAVE_IDLE_MS = 650
+type SaveVisualState = 'saved' | 'saving' | 'error'
+
+function mergeSaveState(...states: SaveVisualState[]): SaveVisualState {
+  if (states.includes('error')) return 'error'
+  if (states.includes('saving')) return 'saving'
+  return 'saved'
+}
 
 /* ─── 将图片文件转为 dataURL（base64），用于把粘贴/拖入的图片内嵌进笔记，避免 blob: 临时地址丢失 ─── */
 function fileToDataUrl(file: File): Promise<string> {
@@ -107,7 +116,9 @@ import {
   Link2, Image as ImageIcon, Highlighter, Palette, ChevronDown,
   Undo, Redo, Minus, Download, FileText, FileCode, FileType, Clock, History,
   AlignLeft, AlignCenter, AlignRight, Plus, Trash2, Table as TableIcon, X, Search,
-  ArrowUp, ArrowDown, ArrowLeft, ArrowRight
+  ArrowUp, ArrowDown, ArrowLeft, ArrowRight, CheckCircle2, AlertCircle, Loader2, Save,
+  Pin, PinOff, Focus, Minimize2, TextCursorInput, BookOpen, PencilLine,
+  Sparkles,
 } from 'lucide-react'
 import { useEffect, useState, useRef, useCallback, useLayoutEffect } from 'react'
 import { exportNote, exportToDownloads, type ExportFormat } from '@/utils/exportNote'
@@ -119,28 +130,53 @@ import {
   readVersion,
   pushToRemote,
   pullRemote,
-  sanitizeNoteIdForFile,
   GITEE_REMOTE,
 } from '@/utils/gitBackup'
 import { useAppStore } from '@/store'
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs'
+import { calculateNoteStats, EMPTY_NOTE_STATS } from '@/utils/noteStats'
+import type { NoteAiBridge } from './noteAiBridge'
 
 /* ─── Color Tokens ─── */
 const C = {
-  primary: '#2563EB',
-  primaryHover: '#1D4ED8',
-  primaryLight: 'rgba(37,99,235,0.1)',
-  accent: '#06B6D4',
-  bg: '#F8FAFC',
-  border: '#E2E8F0',
-  text: '#1E293B',
-  textSecondary: '#64748B',
-  textMuted: '#94A3B8',
-  success: '#10B981',
-  warning: '#F59E0B',
-  danger: '#EF4444',
-  surface: '#FFFFFF',
+  primary: 'var(--app-primary)',
+  primaryHover: 'var(--app-primary-hover)',
+  primaryLight: 'var(--app-primary-light)',
+  primaryLightHover: 'var(--app-primary-light-hover)',
+  accent: 'var(--app-accent)',
+  bg: 'var(--app-bg)',
+  border: 'var(--app-border)',
+  text: 'var(--app-text)',
+  textSecondary: 'var(--app-text-secondary)',
+  textMuted: 'var(--app-text-muted)',
+  success: 'var(--app-success)',
+  warning: 'var(--app-warning)',
+  danger: 'var(--app-danger)',
+  dangerBg: 'var(--app-danger-bg)',
+  surface: 'var(--app-surface)',
+  shadow: 'var(--app-shadow)',
 } as const
+
+type EditorTarget = {
+  noteId: string
+  isLocal: boolean
+  path: string | null
+  root: string | null
+  title: string
+}
+
+type SavedAiSelection = {
+  noteId: string
+  from: number
+  to: number
+  text: string
+}
+
+function noteTitleFromPath(filePath: string | null): string {
+  if (!filePath) return '未命名'
+  const fileName = filePath.replace(/\\/g, '/').split('/').pop() || '未命名'
+  return fileName.replace(/\.html?$/i, '') || '未命名'
+}
 
 /**
  * 下拉/弹出层展开时，点击容器外部自动收起。
@@ -170,40 +206,136 @@ function useAutoDismiss(
 
 interface NoteEditorProps {
   note: Note
+  /** 本地文件读取成功后同步内存数据，供大纲、搜索和侧栏使用最新内容 */
+  onLocalLoad?: (noteId: string, content: string) => void
   /** 本地文件笔记落盘后，同步更新内存中的 localNotes（selectedNote 来源），避免切回时读到旧内容导致图片丢失 */
   onLocalPersist?: (noteId: string, content: string) => void
   /** 本地文件笔记标题变更后，同步更新内存中的 localNotes（让侧栏显示新标题） */
   onLocalTitlePersist?: (noteId: string, title: string) => void
+  /** 本地文件笔记标签变更后，写入 .dunote-meta.json 并同步内存 */
+  onLocalTagsPersist?: (noteId: string, tags: string[]) => void | Promise<void>
+  /** 当前笔记列表中的全部标签，用于编辑器内自动补全 */
+  tagSuggestions?: string[]
+  /** 当前可链接的笔记，用于 [[标题]] 自动补全 */
+  wikiLinkNotes?: Note[]
   /** 外部强制重载信号：恢复历史后 +1，让当前笔记（note.id 不变）重新从磁盘/内存加载最新内容 */
   reloadToken?: number
   /** 打开历史弹窗时指定默认页签：'snapshots' = 本地实时保存版本 */
   onOpenHistoryTab?: (tab: 'history' | 'snapshots') => void
+  /** 窄屏下返回笔记列表 */
+  onBackToNotes?: () => void
+  /** 切换当前笔记的固定状态 */
+  onTogglePinned?: (note: Note) => void | Promise<void>
+  /** 打字机模式偏好由页面统一管理，供编辑器按钮与命令面板共享 */
+  typewriterMode: boolean
+  /** 切换打字机模式 */
+  onToggleTypewriterMode: () => void
+  /** 隐藏导航与次要控件，只保留沉浸式写作区域 */
+  focusMode: boolean
+  /** 切换专注模式 */
+  onToggleFocusMode: () => void
+  /** 阅读模式仅锁定编辑层，不修改或重新写入笔记内容 */
+  readingMode: boolean
+  /** 切换阅读模式 */
+  onToggleReadingMode: () => void
+  /** 打开正文中的 [[标题]] 链接；不存在时由页面决定是否新建 */
+  onWikiLinkClick?: (title: string) => void | Promise<boolean>
+  /** 笔记内 AI 会话面板是否打开 */
+  aiPanelOpen: boolean
+  /** 切换当前笔记的 AI 会话面板 */
+  onToggleAiPanel: () => void
+  /** 向笔记页发布实时编辑桥；加载、切换或卸载时传 null */
+  onAiBridgeChange: (bridge: NoteAiBridge | null) => void
 }
 
-export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, reloadToken = 0, onOpenHistoryTab }: NoteEditorProps) {
-  const { updateNote, setShowHistory, setHistory, settings, showToast, localRootFolder, setSelectedNoteId } = useAppStore()
+export default function NoteEditor({
+  note,
+  onLocalLoad,
+  onLocalPersist,
+  onLocalTitlePersist,
+  onLocalTagsPersist,
+  tagSuggestions = [],
+  wikiLinkNotes = [],
+  reloadToken = 0,
+  onOpenHistoryTab,
+  onBackToNotes,
+  onTogglePinned,
+  typewriterMode,
+  onToggleTypewriterMode,
+  focusMode,
+  onToggleFocusMode,
+  readingMode,
+  onToggleReadingMode,
+  onWikiLinkClick,
+  aiPanelOpen,
+  onToggleAiPanel,
+  onAiBridgeChange,
+}: NoteEditorProps) {
+  const {
+    updateNote,
+    flushNotes,
+    setShowHistory,
+    setHistory,
+    settings,
+    showToast,
+    localRootFolder,
+    setSelectedNoteId,
+  } = useAppStore()
   // 标题受控：与 note.title 同步，但允许本地临时编辑态（输入中文时如果直接绑 note.title，每次输入都会触发 store 更新，可能干扰 IME/光标）
   const [titleDraft, setTitleDraft] = useState<string>(note.title || '')
   // 供 persistContent（useCallback，闭包会过期）读取最新标题写入快照
   const titleRef = useRef<string>(note.title || '')
+  const titleDraftRef = useRef<string>(note.title || '')
+  const titleDraftNoteIdRef = useRef<string>(note.id)
+  const noteRef = useRef(note)
+  noteRef.current = note
   useEffect(() => { titleRef.current = titleDraft || note.title || '' }, [titleDraft, note.title])
+  const [contentSaveState, setContentSaveState] = useState<SaveVisualState>('saved')
+  const [titleSaveState, setTitleSaveState] = useState<SaveVisualState>('saved')
+  const overallSaveState = mergeSaveState(contentSaveState, titleSaveState)
+  const typewriterModeRef = useRef(typewriterMode)
+  const typewriterFrameRef = useRef<number | null>(null)
+  const editorScrollRef = useRef<HTMLDivElement>(null)
+  const readingModeRef = useRef(readingMode)
+  readingModeRef.current = readingMode
+  const onWikiLinkClickRef = useRef(onWikiLinkClick)
+  onWikiLinkClickRef.current = onWikiLinkClick
+  const wikiLinkNotesRef = useRef(wikiLinkNotes)
+  wikiLinkNotesRef.current = wikiLinkNotes
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [exportTarget, setExportTarget] = useState<{ format: ExportFormat; title: string; html: string } | null>(null)
   const [isCreatingHistory, setIsCreatingHistory] = useState(false)
   const creatingHistoryRef = useRef(false)
   const exportMenuRef = useRef<HTMLDivElement>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 本地文件写入与普通笔记落盘按顺序执行，避免较慢的旧保存覆盖较新的内容。
+  const contentSaveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const titleSaveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const titleSaveRevisionRef = useRef(0)
+  // 笔记切换串行执行：先保存旧笔记，确认成功后才加载目标笔记。
+  const transitionQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const switchRequestRef = useRef(0)
   // 让 onLocalTitlePersist 闭包也能拿到最新值（避免 useCallback 闭包陷阱）
   const onLocalTitlePersistRef = useRef(onLocalTitlePersist)
   onLocalTitlePersistRef.current = onLocalTitlePersist
+  const onLocalTagsPersistRef = useRef(onLocalTagsPersist)
+  onLocalTagsPersistRef.current = onLocalTagsPersist
   const baselineContentRef = useRef<string>(note.content || '')
   const lastEmittedRef = useRef<string>('') // 记录编辑器最近一次输出的 HTML，用于区分“自编辑”与“外部内容变更”
   const editorRef = useRef<Editor | null>(null)
+  const aiPanelOpenRef = useRef(aiPanelOpen)
+  aiPanelOpenRef.current = aiPanelOpen
+  const onAiBridgeChangeRef = useRef(onAiBridgeChange)
+  onAiBridgeChangeRef.current = onAiBridgeChange
+  const publishAiBridgeRef = useRef<() => void>(() => {})
+  const lastAiSelectionRef = useRef<SavedAiSelection | null>(null)
   // 记录“当前编辑器里加载的是哪个笔记”，用于切文档/卸载时把未保存的编辑正确落盘，避免图片等丢失
-  const editorMetaRef = useRef<{ noteId: string; isLocal: boolean; path: string | null }>({
+  const editorMetaRef = useRef<EditorTarget>({
     noteId: note.id,
-    isLocal: !!(note as any)._isLocalFile,
-    path: (note as any).filePath ?? null,
+    isLocal: !!note._isLocalFile,
+    path: note.filePath ?? null,
+    root: localRootFolder,
+    title: note.title || '',
   })
   // 记录“编辑器已经加载并（对本地文件）从磁盘读取过的最新笔记 id”。
   // 用于区分“首次/切换进入”与“同一篇的外部变更”：前者以磁盘为权威重新读取，后者仅外部变更才重载，避免光标跳动。
@@ -216,12 +348,27 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
   // 让 useEditor 配置闭包里也能拿到最新的 onLocalPersist（避免闭包捕获初始值）
   const onLocalPersistRef = useRef(onLocalPersist)
   onLocalPersistRef.current = onLocalPersist
+  const onLocalLoadRef = useRef(onLocalLoad)
+  onLocalLoadRef.current = onLocalLoad
   const onOpenHistoryTabRef = useRef(onOpenHistoryTab)
   onOpenHistoryTabRef.current = onOpenHistoryTab
   // 标题落盘去抖：避免连续输入时把整个 meta 文件重写 N 次
   const titleCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // 最近一次提交到磁盘/store 的标题（用于跳过未变更的写入）
   const lastCommittedTitleRef = useRef<string>(note.title || '')
+  const lastCommittedTitleNoteIdRef = useRef<string>(note.id)
+  useEffect(() => {
+    document.body.classList.toggle('dunote-focus-mode', focusMode)
+    return () => document.body.classList.remove('dunote-focus-mode')
+  }, [focusMode])
+
+  useEffect(() => {
+    typewriterModeRef.current = typewriterMode
+  }, [typewriterMode])
+
+  // 卸载清理时读取最新闭包，同时保证保存 Promise 不会被提前丢弃。
+  const flushPendingRef = useRef<() => Promise<boolean>>(async () => true)
+  const flushPendingTitleRef = useRef<() => Promise<boolean>>(async () => true)
   // IME 合成状态：handleDOMEvents 追踪，handleKeyDown 据此放行所有按键。
   // macOS WKWebView 的 IME 事件时序与 Chromium 不同：确认键 keydown 常在 compositionend 之后、
   // 且 isComposing=false / keyCode≠229 才到达，单纯依赖 compositionstart/end 不够。
@@ -260,19 +407,18 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const lastSearchedRef = useRef('')
 
-  const editor = useEditor({
+  const editorInstance = useEditor({
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3, 4, 5, 6] },
+        link: { openOnClick: false },
       }),
-      Underline,
       Highlight.configure({ multicolor: true }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder: '输入/显示菜单或直接录入' }),
       // allowBase64 必须为 true：否则 TipTap 从 HTML 解析（setContent）时会丢弃 data:image/...;base64 图片，
       // 导致切换/重启后重新加载磁盘内容时图片消失（文本正常）。首次用 setImage 命令插入不受此限制，故只在重载时暴露。
       Image.configure({ allowBase64: true }),
-      Link.configure({ openOnClick: false }),
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: true }),
@@ -286,6 +432,12 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
       FontSize,
       SlashCommand,
       SearchExtension,
+      WikiLink,
+      WikiLinkSuggestion.configure({
+        getNotes: () => wikiLinkNotesRef.current,
+        getCurrentNoteId: () => noteRef.current.id,
+        maxItems: 12,
+      }),
       ImeGuard,
     ],
     // 初始内容留空：挂载后的加载 effect 一定会为当前笔记重新 setContent（本地笔记以磁盘为权威）。
@@ -330,6 +482,19 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
           if (e.isComposing) armComposing()
           return false
         },
+      },
+      handleClick: (_view, _pos, event) => {
+        const target = event.target instanceof Element
+          ? event.target.closest<HTMLElement>('[data-wiki-link]')
+          : null
+        if (!target) return false
+        const title = target.dataset.wikiLink?.trim()
+        if (!title || !onWikiLinkClickRef.current) return false
+        if (!readingModeRef.current && !(event.ctrlKey || event.metaKey)) return false
+        event.preventDefault()
+        event.stopPropagation()
+        void onWikiLinkClickRef.current(title)
+        return true
       },
       handleKeyDown: (view, event) => {
         const ed = editorRef.current
@@ -507,82 +672,362 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
       }
+      publishAiBridgeRef.current()
       saveTimeoutRef.current = setTimeout(() => {
         const content = editor.getHTML()
         // 记录编辑器本次产出的 HTML，供下方 effect 判断是否为自编辑（自编辑不回灌 setContent）
         lastEmittedRef.current = content
         // 仅当内容相对基线（上次加载/保存的内容）确有变化才落盘——对应“文档发生变化”
         if (content !== baselineContentRef.current) {
-          persistContent(content)
-          // Update baseline after saving
-          baselineContentRef.current = content
+          void persistContent(content).then((saved) => {
+            if (saved) baselineContentRef.current = content
+          })
         }
       }, AUTOSAVE_IDLE_MS)
+    },
+    onSelectionUpdate: ({ editor }) => {
+      if (
+        !loadingRef.current
+        && loadedNoteIdRef.current === editorMetaRef.current.noteId
+        && editor.state.selection.from !== editor.state.selection.to
+      ) {
+        lastAiSelectionRef.current = {
+          noteId: editorMetaRef.current.noteId,
+          from: editor.state.selection.from,
+          to: editor.state.selection.to,
+          text: editor.state.doc.textBetween(
+            editor.state.selection.from,
+            editor.state.selection.to,
+            '\n',
+            '\n',
+          ),
+        }
+      }
+      publishAiBridgeRef.current()
     },
   })
 
   // Keep editorRef in sync for use inside handleKeyDown (TipTap v3 passes (view, event), not ({editor, event}))
-  editorRef.current = editor
+  const editor = editorInstance as Editor
+  editorRef.current = editorInstance
 
-  // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、5 秒空闲未触发的图片）写入 editorMetaRef 所指的笔记。
+  useEffect(() => {
+    if (!editorInstance || editorInstance.isDestroyed) return
+    if (loadingRef.current) return
+    try {
+      editorInstance.setEditable(!readingMode)
+    } catch {
+      // 编辑器正在切换时由文档切换 effect 在结束时恢复正确状态。
+    }
+  }, [editorInstance, readingMode])
+
+  const publishAiBridge = useCallback(() => {
+    const ed = editorRef.current
+    const expectedNoteId = note.id
+    const noteMatches = Boolean(
+      ed
+      && !ed.isDestroyed
+      && noteRef.current.id === expectedNoteId
+      && editorMetaRef.current.noteId === expectedNoteId
+      && loadedNoteIdRef.current === expectedNoteId,
+    )
+
+    if (!aiPanelOpenRef.current || !noteMatches || !ed) {
+      onAiBridgeChangeRef.current?.(null)
+      return
+    }
+
+    const canWrite = () => Boolean(
+      aiPanelOpenRef.current
+      && !readingModeRef.current
+      && !loadingRef.current
+      && !ed.isDestroyed
+      && noteRef.current.id === expectedNoteId
+      && editorMetaRef.current.noteId === expectedNoteId
+      && loadedNoteIdRef.current === expectedNoteId,
+    )
+
+    const finishWrite = (changed: boolean): boolean => {
+      if (!changed) return false
+      lastAiSelectionRef.current = null
+      publishAiBridgeRef.current()
+      return true
+    }
+
+    const expectedSelection = lastAiSelectionRef.current
+    const hasSelection = Boolean(
+      expectedSelection
+      && expectedSelection.noteId === expectedNoteId
+      && expectedSelection.from < expectedSelection.to
+      && expectedSelection.text.trim(),
+    )
+
+    const bridge: NoteAiBridge = {
+      noteId: expectedNoteId,
+      characterCount: Array.from(
+        ed.state.doc.textBetween(0, ed.state.doc.content.size, '\n', '\n'),
+      ).length,
+      selectionCharacterCount: hasSelection && expectedSelection
+        ? Array.from(expectedSelection.text).length
+        : 0,
+      hasSelection,
+      readOnly: readingMode,
+      ready: true,
+      getPlainText: () => {
+        if (ed.isDestroyed || editorMetaRef.current.noteId !== expectedNoteId) return ''
+        return ed.state.doc.textBetween(0, ed.state.doc.content.size, '\n', '\n')
+      },
+      getSelectedText: () => {
+        const selection = lastAiSelectionRef.current
+        if (
+          !selection
+          || selection.noteId !== expectedNoteId
+          || selection.from >= selection.to
+          || selection.to > ed.state.doc.content.size
+        ) return ''
+        return ed.state.doc.textBetween(selection.from, selection.to, '\n', '\n')
+      },
+      insertHtml: (html) => {
+        if (!html.trim() || !canWrite()) return false
+        try {
+          const position = Math.min(ed.state.selection.to, ed.state.doc.content.size)
+          const changed = ed.chain()
+            .setTextSelection(position)
+            .focus()
+            .insertContent(html)
+            .run()
+          return finishWrite(changed)
+        } catch {
+          return false
+        }
+      },
+      replaceSelection: (html) => {
+        if (!html.trim() || !canWrite()) return false
+        const selection = lastAiSelectionRef.current
+        if (
+          !selection
+          || selection.noteId !== expectedNoteId
+          || selection.from >= selection.to
+          || selection.to > ed.state.doc.content.size
+        ) return false
+        const currentText = ed.state.doc.textBetween(selection.from, selection.to, '\n', '\n')
+        if (currentText !== selection.text) {
+          lastAiSelectionRef.current = null
+          publishAiBridgeRef.current()
+          return false
+        }
+        try {
+          const changed = ed.chain()
+            .setTextSelection({ from: selection.from, to: selection.to })
+            .focus()
+            .deleteSelection()
+            .insertContent(html)
+            .run()
+          return finishWrite(changed)
+        } catch {
+          return false
+        }
+      },
+      appendHtml: (html) => {
+        if (!html.trim() || !canWrite()) return false
+        try {
+          const end = ed.state.doc.content.size
+          const separator = ed.isEmpty ? '' : '<p></p>'
+          const changed = ed.chain()
+            .setTextSelection(end)
+            .focus()
+            .insertContent(`${separator}${html}`)
+            .run()
+          return finishWrite(changed)
+        } catch {
+          return false
+        }
+      },
+    }
+
+    onAiBridgeChangeRef.current?.(bridge)
+  }, [note.id, readingMode])
+  publishAiBridgeRef.current = publishAiBridge
+
+  useEffect(() => {
+    publishAiBridgeRef.current()
+  }, [aiPanelOpen, note.id, readingMode, reloadToken])
+
+  useEffect(() => () => {
+    onAiBridgeChangeRef.current?.(null)
+  }, [])
+
+  // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、自动保存空闲未触发的图片）写入 editorMetaRef 所指的笔记。
   // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失（对应自动保存第 2 种触发：切换文档且已变化）。
-  const persistContent = useCallback((content: string) => {
-    const meta = editorMetaRef.current
-    // 普通笔记：更新内存 store（本地文件笔记不在 store.notes 中，updateNote 为 no-op）
-    updateNote(meta.noteId, { content })
-    // 本地文件笔记：写磁盘 + 同步内存 localNotes
-    if (meta.isLocal && meta.path) {
-      // 内容为空时不写盘，避免把有内容的文件清空成空白（导致重开后整篇丢失）
-      if (content.trim()) {
-        writeTextFile(meta.path, content)
-          .then(() => {
-            console.log(`[Tauri] Wrote to file: ${meta.path}`)
-            // 仅在「文件真正写入成功后」才生成实时保存版本：
-            // 写盘失败 / 被空内容拦截时都不留档，避免产生与磁盘实际内容不符的假版本。
-            void saveSnapshot(meta.noteId, titleRef.current || '未命名', content)
-          })
-          .catch((e) => console.error(`[Tauri] Failed to write to file: ${meta.path}`, e))
-        // 同步内存里的 localNotes，避免切回时读到旧内容
-        onLocalPersistRef.current?.(meta.noteId, content)
+  const persistContent = useCallback((content: string, target = editorMetaRef.current): Promise<boolean> => {
+    setContentSaveState('saving')
+
+    const write = async (): Promise<boolean> => {
+      try {
+        if (target.isLocal) {
+          if (!target.path) throw new Error('本地笔记缺少文件路径')
+          await writeTextFile(target.path, content)
+          // 只有磁盘写入成功后才更新内存与快照，避免界面展示与真实文件不一致。
+          onLocalPersistRef.current?.(target.noteId, content)
+        } else {
+          updateNote(target.noteId, { content })
+          await flushNotes()
+        }
+
+        void saveSnapshot(
+          target.noteId,
+          target.title || titleRef.current || '未命名',
+          content,
+        ).catch((error) => {
+          console.warn('[NoteEditor] 写入实时快照失败:', error)
+        })
+
+        if (editorMetaRef.current.noteId === target.noteId) {
+          setContentSaveState('saved')
+        }
+        return true
+      } catch (error) {
+        console.error('[NoteEditor] 保存笔记失败:', error)
+        if (editorMetaRef.current.noteId === target.noteId) {
+          setContentSaveState('error')
+        }
+        showToast(
+          `保存失败：${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        )
+        return false
       }
     }
-  }, [updateNote])
 
-  // 立即把当前编辑器里“尚未落盘”的内容（如刚粘贴、5 秒空闲未触发的图片）写入 editorMetaRef 所指的笔记。
+    const task = contentSaveQueueRef.current.then(write, write)
+    contentSaveQueueRef.current = task.then(() => undefined, () => undefined)
+    return task
+  }, [flushNotes, showToast, updateNote])
+
+  // 立即把当前编辑器里“尚未落盘”的内容写入 editorMetaRef 所指的笔记。
   // 用于“切到其它文档前”与“组件卸载前”，避免未保存的编辑丢失（对应自动保存第 2 种触发：切换文档且已变化）。
-  const flushPending = useCallback(() => {
+  const flushPending = useCallback(async (): Promise<boolean> => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current)
       saveTimeoutRef.current = null
     }
     const ed = editorRef.current
-    if (!ed || ed.isDestroyed) return
+    if (!ed || ed.isDestroyed) return true
+    // The initial document load is async; do not persist the empty editor shell.
+    if (loadedNoteIdRef.current === null) return true
     let content: string
     try {
       content = ed.getHTML()
     } catch {
-      return
+      return false
     }
-    if (content === baselineContentRef.current) return
+    if (content === baselineContentRef.current) return true
     // 切换笔记 / 卸载前的落盘，同样会触发实时保存版本留档
-    persistContent(content)
-    baselineContentRef.current = content
+    const saved = await persistContent(content)
+    if (saved) baselineContentRef.current = content
+    return saved
   }, [persistContent])
 
-  // Cleanup: flush pending save on unmount (e.g. closing editor) so last edits aren't lost
-  useEffect(() => {
-    return () => {
-      flushPending()
+  const commitTitle = useCallback((target: EditorTarget, value: string): Promise<boolean> => {
+    const trimmed = (value || '').trim()
+    if (
+      lastCommittedTitleNoteIdRef.current === target.noteId
+      && lastCommittedTitleRef.current === trimmed
+    ) {
+      return Promise.resolve(true)
     }
-  }, [flushPending])
+
+    const revision = ++titleSaveRevisionRef.current
+    if (editorMetaRef.current.noteId === target.noteId) {
+      setTitleSaveState('saving')
+    }
+
+    const write = async (): Promise<boolean> => {
+      try {
+        if (target.isLocal) {
+          if (!target.root || !target.path) {
+            throw new Error('本地笔记缺少根目录或文件路径')
+          }
+          await saveNoteTitle(target.root, toRelPath(target.root, target.path), trimmed)
+          // 磁盘成功后再更新界面；空标题沿用文件名作为可见标题。
+          onLocalTitlePersistRef.current?.(
+            target.noteId,
+            trimmed || noteTitleFromPath(target.path),
+          )
+        } else {
+          updateNote(target.noteId, { title: trimmed })
+          await flushNotes()
+        }
+
+        if (editorMetaRef.current.noteId === target.noteId) {
+          lastCommittedTitleNoteIdRef.current = target.noteId
+          lastCommittedTitleRef.current = trimmed
+          editorMetaRef.current.title = trimmed
+          titleRef.current = trimmed
+          if (revision === titleSaveRevisionRef.current) {
+            setTitleSaveState('saved')
+          }
+        }
+        return true
+      } catch (error) {
+        console.error('[NoteEditor] 保存标题失败:', error)
+        if (editorMetaRef.current.noteId === target.noteId) {
+          setTitleSaveState('error')
+        }
+        showToast(
+          `标题保存失败：${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        )
+        return false
+      }
+    }
+
+    const task = titleSaveQueueRef.current.then(write, write)
+    titleSaveQueueRef.current = task.then(() => undefined, () => undefined)
+    return task
+  }, [flushNotes, showToast, updateNote])
+
+  const handleTagsChange = useCallback((nextTags: string[]) => {
+    const normalized = normalizeTagList(nextTags)
+    if (sameTags(note.tags || [], normalized)) return
+
+    if (note._isLocalFile) {
+      void Promise.resolve(onLocalTagsPersistRef.current?.(note.id, normalized)).catch((error) => {
+        console.error('[NoteEditor] 保存标签失败:', error)
+        showToast(
+          `标签保存失败：${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        )
+      })
+      return
+    }
+
+    updateNote(note.id, { tags: normalized })
+  }, [note._isLocalFile, note.id, note.tags, showToast, updateNote])
+
+  const flushPendingTitle = useCallback(async (): Promise<boolean> => {
+    if (titleCommitTimerRef.current) {
+      clearTimeout(titleCommitTimerRef.current)
+      titleCommitTimerRef.current = null
+    }
+    const target = { ...editorMetaRef.current }
+    const title = titleDraftNoteIdRef.current === target.noteId
+      ? titleDraftRef.current
+      : target.title
+    return commitTitle(target, title)
+  }, [commitTitle])
+
+  flushPendingRef.current = flushPending
+  flushPendingTitleRef.current = flushPendingTitle
 
   // 用 layout effect：内容切换（flush 旧笔记 + 锁定编辑 + setContent）在浏览器绘制前完成，
   // 避免先绘制出上一篇/空内容再跳变，同时消除「初始 content 为空」带来的空帧窗口。
   useLayoutEffect(() => {
     if (!editor) return
     const targetId = note.id
-    const isLocal = !!(note as any)._isLocalFile
-    const path = (note as any).filePath ?? null
+    const isLocal = !!note._isLocalFile
+    const path = note.filePath ?? null
+    const targetTitle = note.title || ''
 
     // 检测外部强制重载信号（恢复历史）：token 变化时即使是同一篇笔记也要重新加载
     const forceReload = reloadTokenRef.current !== reloadToken
@@ -591,156 +1036,154 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     // 同一篇笔记已加载过且无强制重载信号：不重载，避免光标跳动 / 覆盖自身编辑内容
     if (loadedNoteIdRef.current === targetId && !forceReload) return
 
-    // 首次加载（之前没有任何笔记被加载过）不要 flush：
-    // 此时编辑器刚用 note.content 初始化（本地文件笔记 note.content 为空），
-    // baseline 尚未对齐磁盘真实内容；若此时 flush，会把磁盘整篇内容误写成空段落（<p></p>），
-    // 导致“退出软件重新打开后整篇笔记丢失”。首次加载无需保存，因为还没发生过任何编辑。
-    // 恢复历史（forceReload）时不 flush：意图就是丢弃当前编辑器内容、加载历史内容，
-    // 若此时 flush 反而会把编辑器旧内容写回、覆盖刚恢复的磁盘/内存内容。
-    if (loadedNoteIdRef.current !== null && !forceReload) {
-      // 切换到不同笔记：先把旧笔记里尚未落盘的内容（如刚粘贴的图片）保存到原笔记，避免丢失
-      flushPending()
-    }
-
-    // 本地文件笔记：以磁盘文件为权威重新读取最新内容。
-    // 普通笔记：内存即为准。
-    // 依赖加入 editor：编辑器首次挂载时 editor 可能为 null，若 effect 提前 return 且依赖不变就再也不会读盘，
-    // 导致软件重启后打开本地笔记显示的是陈旧内存内容（磁盘里其实已有图片）。
-    // ok=false 表示「本地文件读取失败」：此时绝不能把回退内容（很可能是空字符串）
-    // 灌进编辑器、更不能把 meta 指向新笔记——否则编辑器里残留的上一篇内容会被当成
-    // 这篇笔记的内容写盘，正是「切换的笔记被上一个笔记数据覆盖」的成因之一。
-    const loadContent = async (): Promise<{ content: string; ok: boolean }> => {
-      if (isLocal && path) {
-        try {
-          // 读取成功即以磁盘为权威（文件本身为空也是合法状态）
-          return { content: await readTextFile(path), ok: true }
-        } catch (e) {
-          console.warn('[NoteEditor] 读取本地文件失败:', e)
-          return { content: note.content || '', ok: false }
-        }
-      }
-      return { content: note.content || '', ok: true }
-    }
-
-    // 先标记正在为 targetId 加载，防止快速切换时重复发起 / 竞态覆盖
-    loadedNoteIdRef.current = targetId
-    // 加载期间锁定编辑：本地文件笔记读取磁盘是异步的，在 setContent 生效前编辑器仍显示旧内容，
-    // 若用户在此期间输入会被误落到旧笔记。置 loadingRef 让 onUpdate 不再排程落盘，
-    // 并 setEditable(false) 直接吞掉这段间隙的键盘输入，彻底杜绝跨笔记覆盖。
+    const request = ++switchRequestRef.current
     loadingRef.current = true
+    lastAiSelectionRef.current = null
+    onAiBridgeChangeRef.current?.(null)
     try {
       editor.setEditable(false)
     } catch {
       /* 编辑器尚未就绪，忽略 */
     }
-    loadContent().then(({ content, ok }) => {
-      // 期间又切走了，放弃本次加载，避免把旧内容覆盖到新笔记
-      if (editor.isDestroyed || loadedNoteIdRef.current !== targetId) {
-        loadingRef.current = false
-        return
-      }
-      // 本地文件读取失败：保持编辑器现状（仍归属上一篇笔记），不 setContent、
-      // 不把 meta 指向新笔记，避免残留内容被当成新笔记内容写盘。退出加载态并提示。
-      if (!ok) {
-        loadingRef.current = false
-        try {
-          if (!editor.isDestroyed) editor.setEditable(true)
-        } catch {
-          /* 忽略 */
+    const runTransition = async () => {
+      if (request !== switchRequestRef.current || noteRef.current.id !== targetId) return
+
+      const previous = { ...editorMetaRef.current }
+      try {
+        // 切换文档前先保存旧文档。首次打开和强制恢复历史时不回写旧内容。
+        if (loadedNoteIdRef.current !== null && !forceReload) {
+          const titleSaved = await flushPendingTitleRef.current()
+          if (!titleSaved) throw new Error('上一笔记的标题尚未保存')
+          if (request !== switchRequestRef.current) return
+
+          const contentSaved = await flushPendingRef.current()
+          if (!contentSaved) throw new Error('上一笔记的内容尚未保存')
+          if (request !== switchRequestRef.current) return
         }
-        console.warn('[NoteEditor] 放弃加载：本地文件读取失败，保持当前内容不变')
-        showToast?.('读取该笔记失败（可能无访问权限），已保持原内容不变', 'error')
-        return
-      }
-      baselineContentRef.current = content
-      lastEmittedRef.current = content
-      try {
+
+        const content = isLocal
+          ? path
+            ? await readTextFile(path)
+            : (() => { throw new Error('本地笔记缺少文件路径') })()
+          : (note.content || '')
+
+        // 读取是异步的，完成时必须再次校验最新请求，避免 A→B→C 的旧结果覆盖 C。
+        if (
+          editor.isDestroyed
+          || request !== switchRequestRef.current
+          || noteRef.current.id !== targetId
+        ) return
+
+        baselineContentRef.current = content
+        lastEmittedRef.current = content
         editor.commands.setContent(content)
-      } catch (err) {
-        console.error('[NoteEditor] setContent failed:', err)
-        editor.commands.setContent('<p></p>')
-      }
-      editorMetaRef.current = { noteId: targetId, isLocal, path }
-      loadingRef.current = false
-      // 内容已就位，恢复可编辑
-      try {
-        if (!editor.isDestroyed) editor.setEditable(true)
-      } catch {
-        /* 忽略 */
-      }
-    })
-  }, [editor, note.id, reloadToken])
+        editorMetaRef.current = {
+          noteId: targetId,
+          isLocal,
+          path,
+          root: localRootFolder,
+          title: targetTitle,
+        }
+        loadedNoteIdRef.current = targetId
+        titleDraftNoteIdRef.current = targetId
+        titleDraftRef.current = targetTitle
+        titleRef.current = targetTitle
+        lastCommittedTitleNoteIdRef.current = targetId
+        lastCommittedTitleRef.current = targetTitle
+        setTitleDraft(targetTitle)
+        setContentSaveState('saved')
+        setTitleSaveState('saved')
 
-  // 切笔记时同步标题草稿
-  useEffect(() => {
-    setTitleDraft(note.title || '')
-    lastCommittedTitleRef.current = note.title || ''
-  }, [note.id, note.title])
+        if (isLocal) {
+          onLocalLoadRef.current?.(targetId, content)
+        }
+      } catch (error) {
+        console.error('[NoteEditor] 切换笔记失败:', error)
+        if (request === switchRequestRef.current) {
+          // 保存或读取失败时保持原编辑器内容，并把选择恢复到内容真正所属的笔记。
+          if (loadedNoteIdRef.current !== null) {
+            setSelectedNoteId(previous.noteId)
+          }
+          showToast(
+            `无法打开或保存笔记：${error instanceof Error ? error.message : String(error)}`,
+            'error',
+          )
+        }
+      } finally {
+        if (request === switchRequestRef.current) {
+          loadingRef.current = false
+          try {
+            if (!editor.isDestroyed) editor.setEditable(!readingModeRef.current)
+          } catch {
+            /* 忽略 */
+          }
+          publishAiBridgeRef.current()
+        }
+      }
+    }
 
-  // 标题编辑：立即更新本地草稿（保证受控），500ms 防抖后落盘
+    const task = transitionQueueRef.current.then(runTransition, runTransition)
+    transitionQueueRef.current = task.then(() => undefined, () => undefined)
+  }, [editor, note._isLocalFile, note.content, note.filePath, note.id, note.title, reloadToken, localRootFolder, setSelectedNoteId, showToast])
+
+  // 标题编辑：立即保留草稿，空闲 650ms 后串行写入。切换笔记时由过渡队列强制 flush。
   const handleTitleChange = useCallback((value: string) => {
+    const target = { ...editorMetaRef.current }
+    if (target.noteId !== note.id) return
+    titleDraftRef.current = value
+    titleDraftNoteIdRef.current = target.noteId
+    target.title = value
+    editorMetaRef.current.title = value
     setTitleDraft(value)
     if (titleCommitTimerRef.current) clearTimeout(titleCommitTimerRef.current)
     titleCommitTimerRef.current = setTimeout(() => {
       titleCommitTimerRef.current = null
-      const meta = editorMetaRef.current
-      // 防止切换笔记后旧计时器把标题写到错误笔记
-      if (meta.noteId !== note.id) return
-      const trimmed = (value || '').trim()
-      // 标题未变（与上次提交值一致）→ 跳过
-      if ((lastCommittedTitleRef.current || '') === trimmed) return
-      lastCommittedTitleRef.current = trimmed
-      const isLocal = !!(note as any)._isLocalFile
-      if (isLocal) {
-        // 本地文件笔记：写 .dunote-meta.json + 通知 NotesPage 同步 localNotes
-        const root = localRootFolder
-        const filePath = (note as any).filePath as string | undefined
-        if (root && filePath) {
-          const rel = toRelPath(root, filePath)
-          // 写空标题视为删除自定义标题（回退到文件名）
-          saveNoteTitle(root, rel, trimmed).catch((e) => {
-            console.error('[NoteEditor] 写入本地标题失败:', e)
-            showToast('标题保存失败', 'error')
-          })
-        }
-        onLocalTitlePersistRef.current?.(meta.noteId, trimmed)
-      } else {
-        // 普通（内存）笔记：直接更新 store
-        updateNote(meta.noteId, { title: trimmed })
-      }
-    }, 500)
-  }, [note, updateNote, localRootFolder, showToast])
+      void commitTitle(target, value)
+    }, TITLE_SAVE_IDLE_MS)
+  }, [commitTitle, note.id])
 
-  // 切换笔记 / 卸载前：立即 flush 待提交的标题
+  const saveAll = useCallback(async (): Promise<boolean> => {
+    const titleSaved = await flushPendingTitle()
+    const contentSaved = await flushPending()
+    if (!titleSaved || !contentSaved) return false
+    try {
+      await flushNotes()
+      showToast('已保存', 'success')
+      return true
+    } catch (error) {
+      showToast(
+        `保存失败：${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      )
+      return false
+    }
+  }, [flushNotes, flushPending, flushPendingTitle, showToast])
+
+  useEffect(() => {
+    const handleSaveShortcut = (event: KeyboardEvent) => {
+      if (
+        event.repeat
+        || !(event.ctrlKey || event.metaKey)
+        || event.altKey
+        || event.key.toLowerCase() !== 's'
+      ) return
+      event.preventDefault()
+      void saveAll()
+    }
+
+    window.addEventListener('keydown', handleSaveShortcut)
+    return () => window.removeEventListener('keydown', handleSaveShortcut)
+  }, [saveAll])
+
+  // Cleanup 只注册一次；通过 ref 调用最新 flush，避免切换笔记时反复执行卸载清理。
   useEffect(() => {
     return () => {
-      if (titleCommitTimerRef.current) {
-        clearTimeout(titleCommitTimerRef.current)
-        titleCommitTimerRef.current = null
-        // 同步把草稿标题落盘（不通过防抖）
-        const meta = editorMetaRef.current
-        const trimmed = (titleDraft || '').trim()
-        if ((lastCommittedTitleRef.current || '') !== trimmed && trimmed) {
-          lastCommittedTitleRef.current = trimmed
-          const isLocal = !!(note as any)._isLocalFile
-          if (isLocal) {
-            const root = localRootFolder
-            const filePath = (note as any).filePath as string | undefined
-            if (root && filePath) {
-              const rel = toRelPath(root, filePath)
-              // fire-and-forget：组件卸载中无法 await
-              saveNoteTitle(root, rel, trimmed).catch((e) =>
-                console.error('[NoteEditor] flush 标题失败:', e)
-              )
-            }
-            onLocalTitlePersistRef.current?.(meta.noteId, trimmed)
-          } else {
-            updateNote(meta.noteId, { title: trimmed })
-          }
-        }
-      }
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+      if (titleCommitTimerRef.current) clearTimeout(titleCommitTimerRef.current)
+      void flushPendingTitleRef.current()
+      void flushPendingRef.current()
     }
-  }, [note.id])
+  }, [])
 
   // ─── 检索功能：打开 / 检索 / 上一个下一个 / 关闭 ───
   const clearSearchState = useCallback(() => {
@@ -805,7 +1248,12 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
   // Ctrl+F / Cmd+F 打开检索，并阻止浏览器默认查找
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+      if (
+        (e.ctrlKey || e.metaKey)
+        && !e.altKey
+        && !e.shiftKey
+        && (e.key === 'f' || e.key === 'F')
+      ) {
         e.preventDefault()
         openSearch()
       }
@@ -820,7 +1268,198 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     setSearchOpen(false)
   }, [note.id, clearSearchState])
 
-  if (!editor) return null
+  // 所有 Hook 必须无条件执行。TipTap 首次渲染时 editor 暂时为 null，
+  // 把唯一的提前返回放在 Hook 区域之后，避免切换笔记时 Hook 顺序变化。
+  useAutoDismiss(showExportMenu, setShowExportMenu, exportMenuRef)
+
+  const [showColorPicker, setShowColorPicker] = useState(false)
+  const colorPickerRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showColorPicker, setShowColorPicker, colorPickerRef)
+
+  const [showTableColorPicker, setShowTableColorPicker] = useState(false)
+  const tableColorPickerRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showTableColorPicker, setShowTableColorPicker, tableColorPickerRef)
+
+  const [showTextFontFamilyMenu, setShowTextFontFamilyMenu] = useState(false)
+  const textFontFamilyRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showTextFontFamilyMenu, setShowTextFontFamilyMenu, textFontFamilyRef)
+
+  const [showTextFontSizeMenu, setShowTextFontSizeMenu] = useState(false)
+  const textFontSizeRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showTextFontSizeMenu, setShowTextFontSizeMenu, textFontSizeRef)
+
+  const [showTextColorPicker, setShowTextColorPicker] = useState(false)
+  const textColorPickerRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showTextColorPicker, setShowTextColorPicker, textColorPickerRef)
+
+  const [showFontFamilyMenu, setShowFontFamilyMenu] = useState(false)
+  const fontFamilyRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showFontFamilyMenu, setShowFontFamilyMenu, fontFamilyRef)
+
+  const [showFontSizeMenu, setShowFontSizeMenu] = useState(false)
+  const fontSizeRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showFontSizeMenu, setShowFontSizeMenu, fontSizeRef)
+
+  const { currentFontFamily, currentFontSize } = useEditorState({
+    editor: editorInstance,
+    selector: ({ editor: ed }) => {
+      if (!ed) return { currentFontFamily: '', currentFontSize: '' }
+      const attrs = ed.getAttributes('textStyle')
+      return {
+        currentFontFamily: (attrs.fontFamily as string | null) || '',
+        currentFontSize: (attrs.fontSize as string | null) || '',
+      }
+    },
+  }) || { currentFontFamily: '', currentFontSize: '' }
+
+  const noteStats = useEditorState({
+    editor: editorInstance,
+    selector: ({ editor: ed }) => {
+      if (!ed) return EMPTY_NOTE_STATS
+      try {
+        const text = ed.state.doc.textBetween(
+          0,
+          ed.state.doc.content.size,
+          '\n',
+          '\n',
+        )
+        return calculateNoteStats(text)
+      } catch {
+        return EMPTY_NOTE_STATS
+      }
+    },
+  }) ?? EMPTY_NOTE_STATS
+
+  const centerTypewriterCursor = useCallback((editor: Editor) => {
+    const scroll = editorScrollRef.current
+    if (
+      !typewriterModeRef.current
+      || !scroll
+      || composingRef.current
+      || !editor.view.hasFocus()
+    ) return
+
+    const selection = editor.state.selection
+    if (!selection.empty) return
+
+    try {
+      const coords = editor.view.coordsAtPos(selection.head)
+      const rect = scroll.getBoundingClientRect()
+      if (rect.height < 120) return
+      const caretY = (coords.top + coords.bottom) / 2
+      const targetY = rect.top + rect.height / 2
+      const delta = caretY - targetY
+      if (Math.abs(delta) < 8) return
+
+      const maxScrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight)
+      scroll.scrollTop = Math.min(maxScrollTop, Math.max(0, scroll.scrollTop + delta))
+    } catch {
+      // 文档切换或布局瞬时变化时，坐标可能暂时不可用。
+    }
+  }, [])
+
+  useEffect(() => {
+    typewriterModeRef.current = typewriterMode
+    if (typewriterFrameRef.current !== null) {
+      window.cancelAnimationFrame(typewriterFrameRef.current)
+      typewriterFrameRef.current = null
+    }
+    if (!typewriterMode || !editorInstance || readingMode) return
+
+    const scheduleCenter = () => {
+      if (!typewriterModeRef.current) return
+      if (typewriterFrameRef.current !== null) {
+        window.cancelAnimationFrame(typewriterFrameRef.current)
+      }
+      typewriterFrameRef.current = window.requestAnimationFrame(() => {
+        typewriterFrameRef.current = null
+        centerTypewriterCursor(editorInstance)
+      })
+    }
+
+    editorInstance.on('selectionUpdate', scheduleCenter)
+    editorInstance.on('update', scheduleCenter)
+    scheduleCenter()
+
+    return () => {
+      editorInstance.off('selectionUpdate', scheduleCenter)
+      editorInstance.off('update', scheduleCenter)
+      if (typewriterFrameRef.current !== null) {
+        window.cancelAnimationFrame(typewriterFrameRef.current)
+        typewriterFrameRef.current = null
+      }
+    }
+  }, [centerTypewriterCursor, editorInstance, focusMode, readingMode, typewriterMode])
+
+  const [showCellColorPicker, setShowCellColorPicker] = useState(false)
+  const cellColorRef = useRef<HTMLDivElement>(null)
+  useAutoDismiss(showCellColorPicker, setShowCellColorPicker, cellColorRef)
+
+  const [showTableContextMenu, setShowTableContextMenu] = useState(false)
+  const [tableContextMenuPos, setTableContextMenuPos] = useState({ x: 0, y: 0 })
+  const tableContextMenuRef = useRef<HTMLDivElement>(null)
+
+  const [showInsertMenu, setShowInsertMenu] = useState(false)
+  const insertMenuRef = useRef<HTMLDivElement>(null)
+  const [insertCount, setInsertCount] = useState(1)
+
+  const [showDeleteMenu, setShowDeleteMenu] = useState(false)
+  const deleteMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (tableContextMenuRef.current && !tableContextMenuRef.current.contains(event.target as Node)) {
+        setShowTableContextMenu(false)
+      }
+      if (insertMenuRef.current && !insertMenuRef.current.contains(event.target as Node)) {
+        setShowInsertMenu(false)
+      }
+      if (deleteMenuRef.current && !deleteMenuRef.current.contains(event.target as Node)) {
+        setShowDeleteMenu(false)
+      }
+    }
+    if (showTableContextMenu || showInsertMenu || showDeleteMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showTableContextMenu, showInsertMenu, showDeleteMenu])
+
+  const [showTextContextMenu, setShowTextContextMenu] = useState(false)
+  const [textContextMenuPos, setTextContextMenuPos] = useState({ x: 0, y: 0 })
+  const textContextMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (textContextMenuRef.current && !textContextMenuRef.current.contains(event.target as Node)) {
+        setShowTextContextMenu(false)
+      }
+    }
+    if (showTextContextMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showTextContextMenu])
+
+  useEffect(() => {
+    if (showTableContextMenu) return
+    setShowTableColorPicker(false)
+    setShowCellColorPicker(false)
+    setShowInsertMenu(false)
+    setShowDeleteMenu(false)
+  }, [showTableContextMenu])
+
+  useEffect(() => {
+    if (showTextContextMenu) return
+    setShowTextFontFamilyMenu(false)
+    setShowTextFontSizeMenu(false)
+    setShowTextColorPicker(false)
+  }, [showTextContextMenu])
+
+  if (!editorInstance) return null
 
   const handleExport = (format: ExportFormat) => {
     setShowExportMenu(false)
@@ -828,26 +1467,31 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
   }
 
   // 计算当前笔记在备份仓库中的相对路径
+  const hasLocalHistoryTarget = note._isLocalFile === true && !!note.filePath
+
+  const requireLocalHistoryTarget = (): boolean => {
+    if (hasLocalHistoryTarget) return true
+    showToast('仅本地文件夹中的笔记支持版本备份', 'info')
+    return false
+  }
+
   const resolveBackupTarget = (): { repoDir: string; relPath: string } | null => {
     const repoDir = localRootFolder
-    if (!repoDir) return null
-    if (note.filePath) {
-      const rel = toRelativePath(note.filePath, repoDir).replace(/\\/g, '/')
-      if (rel) return { repoDir, relPath: rel }
-    }
-    // 内存型「普通笔记」：物化到仓库隐藏目录，避免污染用户可见文件
-    return { repoDir, relPath: `.dunote/notes/${sanitizeNoteIdForFile(note.id)}.html` }
+    if (!repoDir || !hasLocalHistoryTarget) return null
+    const rel = toRelativePath(note.filePath, repoDir).replace(/\\/g, '/')
+    return rel ? { repoDir, relPath: rel } : null
   }
 
   // 生成版本 = 把当前笔记真实文件提交进 git 仓库（Gitee 模式再 push）
   const handleCreateHistory = async () => {
+    if (!requireLocalHistoryTarget()) return
     if (creatingHistoryRef.current) return
     creatingHistoryRef.current = true
     setIsCreatingHistory(true)
     try {
       const target = resolveBackupTarget()
       if (!target) {
-        showToast('请先在「打开文件夹」中选择一个本地目录作为备份仓库', 'error')
+        showToast('无法定位当前笔记的本地文件', 'error')
         return
       }
       const content = editor.getHTML()
@@ -894,6 +1538,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
 
   // 打开「实时保存版本」：直接落在本地实时保存版本页签，可从任意一次自动保存找回
   const handleOpenRealtimeHistory = () => {
+    if (!requireLocalHistoryTarget()) return
     setSelectedNoteId(note.id)
     onOpenHistoryTabRef.current?.('snapshots')
     setShowHistory(true)
@@ -901,13 +1546,13 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
 
   // 打开历史面板：从 git log 取版本（Gitee 模式先拉取远程最新）
   const handleOpenHistory = async () => {
+    if (!requireLocalHistoryTarget()) return
     onOpenHistoryTabRef.current?.('history')
     try {
       setSelectedNoteId(note.id)
       const target = resolveBackupTarget()
       if (!target) {
-        showToast('请先在「打开文件夹」中选择本地目录以查看备份', 'error')
-        setShowHistory(true)
+        showToast('无法定位当前笔记的本地文件', 'error')
         return
       }
 
@@ -968,13 +1613,6 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     }
   }
 
-  // 点击外部收起导出菜单
-  useAutoDismiss(showExportMenu, setShowExportMenu, exportMenuRef)
-
-  // Color picker functionality
-  const [showColorPicker, setShowColorPicker] = useState(false)
-  const colorPickerRef = useRef<HTMLDivElement>(null)
-
   const presetColors = [
     '#000000', '#434343', '#666666', '#999999', '#CCCCCC', '#EFEFEF', '#F3F3F3', '#FFFFFF',
     '#FF0000', '#FF5733', '#FF914D', '#FFDA79', '#FFE082', '#FFFF00', '#A3E635', '#4ADE80',
@@ -986,31 +1624,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     setShowColorPicker(false)
   }
 
-  // 点击外部收起颜色选择器（仅主工具栏；两个浮动工具栏各自独立，见下方）
-  useAutoDismiss(showColorPicker, setShowColorPicker, colorPickerRef)
-
-  // 表格浮动工具栏的文本颜色：独立状态与 ref，避免与主工具栏共用 ref 导致收起失效
-  const [showTableColorPicker, setShowTableColorPicker] = useState(false)
-  const tableColorPickerRef = useRef<HTMLDivElement>(null)
-  useAutoDismiss(showTableColorPicker, setShowTableColorPicker, tableColorPickerRef)
-
-  // 文本选中浮动工具栏：字体 / 字号 / 颜色 独立状态与 ref
-  const [showTextFontFamilyMenu, setShowTextFontFamilyMenu] = useState(false)
-  const textFontFamilyRef = useRef<HTMLDivElement>(null)
-  useAutoDismiss(showTextFontFamilyMenu, setShowTextFontFamilyMenu, textFontFamilyRef)
-
-  const [showTextFontSizeMenu, setShowTextFontSizeMenu] = useState(false)
-  const textFontSizeRef = useRef<HTMLDivElement>(null)
-  useAutoDismiss(showTextFontSizeMenu, setShowTextFontSizeMenu, textFontSizeRef)
-
-  const [showTextColorPicker, setShowTextColorPicker] = useState(false)
-  const textColorPickerRef = useRef<HTMLDivElement>(null)
-  useAutoDismiss(showTextColorPicker, setShowTextColorPicker, textColorPickerRef)
-
   // Font family functionality
-  const [showFontFamilyMenu, setShowFontFamilyMenu] = useState(false)
-  const fontFamilyRef = useRef<HTMLDivElement>(null)
-
   const fontFamilies = [
     { label: '默认', value: '' },
     { label: 'Arial', value: 'Arial' },
@@ -1029,12 +1643,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     setShowFontFamilyMenu(false)
   }
 
-  useAutoDismiss(showFontFamilyMenu, setShowFontFamilyMenu, fontFamilyRef)
-
   // Font size functionality
-  const [showFontSizeMenu, setShowFontSizeMenu] = useState(false)
-  const fontSizeRef = useRef<HTMLDivElement>(null)
-
   // 字号：中文字号标准（GB/T 9851）—— 从初号到八号，pt 单位。
   // 两个下拉（主工具栏 1182、备工具栏 2149）共用同一数组。
   const fontSizes = [
@@ -1056,19 +1665,6 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     { label: '八号', value: '5pt' },
   ]
 
-  // 响应式追踪当前光标所在位置的字体/字号，驱动工具栏下拉显示
-  const { currentFontFamily, currentFontSize } = useEditorState({
-    editor,
-    selector: ({ editor: ed }) => {
-      if (!ed) return { currentFontFamily: '', currentFontSize: '' }
-      const attrs = ed.getAttributes('textStyle')
-      return {
-        currentFontFamily: (attrs.fontFamily as string | null) || '',
-        currentFontSize: (attrs.fontSize as string | null) || '',
-      }
-    },
-  }) || { currentFontFamily: '', currentFontSize: '' }
-
   const currentFontFamilyLabel =
     fontFamilies.find((f) => f.value === currentFontFamily)?.label ?? '字体'
   const currentFontSizeLabel =
@@ -1079,12 +1675,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     setShowFontSizeMenu(false)
   }
 
-  useAutoDismiss(showFontSizeMenu, setShowFontSizeMenu, fontSizeRef)
-
   // Cell background color functionality
-  const [showCellColorPicker, setShowCellColorPicker] = useState(false)
-  const cellColorRef = useRef<HTMLDivElement>(null)
-
   const cellColors = [
     '#FFFFFF', '#F8FAFC', '#F1F5F9', '#E2E8F0', '#CBD5E1',
     '#FEE2E2', '#FECACA', '#FCA5A5', '#F87171', '#EF4444',
@@ -1099,23 +1690,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     setShowCellColorPicker(false)
   }
 
-  useAutoDismiss(showCellColorPicker, setShowCellColorPicker, cellColorRef)
-
   // Context menu for table
-  const [showTableContextMenu, setShowTableContextMenu] = useState(false)
-  const [tableContextMenuPos, setTableContextMenuPos] = useState({ x: 0, y: 0 })
-  const tableContextMenuRef = useRef<HTMLDivElement>(null)
-
-  // Insert row/column dropdown menu
-  const [showInsertMenu, setShowInsertMenu] = useState(false)
-  const insertMenuRef = useRef<HTMLDivElement>(null)
-  // Insert count for multi-row/multi-column insert
-  const [insertCount, setInsertCount] = useState(1)
-
-  // Delete row/column dropdown menu
-  const [showDeleteMenu, setShowDeleteMenu] = useState(false)
-  const deleteMenuRef = useRef<HTMLDivElement>(null)
-
   const handleEditorContextMenu = (event: React.MouseEvent) => {
     if (editor.isActive('table')) {
       event.preventDefault()
@@ -1124,31 +1699,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
     }
   }
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (tableContextMenuRef.current && !tableContextMenuRef.current.contains(event.target as Node)) {
-        setShowTableContextMenu(false)
-      }
-      if (insertMenuRef.current && !insertMenuRef.current.contains(event.target as Node)) {
-        setShowInsertMenu(false)
-      }
-      if (deleteMenuRef.current && !deleteMenuRef.current.contains(event.target as Node)) {
-        setShowDeleteMenu(false)
-      }
-    }
-    if (showTableContextMenu || showInsertMenu || showDeleteMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showTableContextMenu, showInsertMenu, showDeleteMenu])
-
   // Text selection context menu
-  const [showTextContextMenu, setShowTextContextMenu] = useState(false)
-  const [textContextMenuPos, setTextContextMenuPos] = useState({ x: 0, y: 0 })
-  const textContextMenuRef = useRef<HTMLDivElement>(null)
-
   const handleTextContextMenu = (event: React.MouseEvent) => {
     const selection = editor.state.selection
     const hasSelection = !selection.empty
@@ -1159,36 +1710,6 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
       setShowTextContextMenu(true)
     }
   }
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (textContextMenuRef.current && !textContextMenuRef.current.contains(event.target as Node)) {
-        setShowTextContextMenu(false)
-      }
-    }
-    if (showTextContextMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [showTextContextMenu])
-
-  // 浮动工具栏关闭时，一并收起它内部的子下拉，避免下次唤起时残留展开状态
-  useEffect(() => {
-    if (showTableContextMenu) return
-    setShowTableColorPicker(false)
-    setShowCellColorPicker(false)
-    setShowInsertMenu(false)
-    setShowDeleteMenu(false)
-  }, [showTableContextMenu])
-
-  useEffect(() => {
-    if (showTextContextMenu) return
-    setShowTextFontFamilyMenu(false)
-    setShowTextFontSizeMenu(false)
-    setShowTextColorPicker(false)
-  }, [showTextContextMenu])
 
   const ToolBtn = ({ active, onClick, children, title }: {
     active?: boolean
@@ -1214,7 +1735,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
         color: active ? C.primary : C.textSecondary,
       }}
       onMouseEnter={(e) => {
-        if (!active) e.currentTarget.style.background = '#F1F5F9'
+        if (!active) e.currentTarget.style.background = 'var(--app-hover)'
       }}
       onMouseLeave={(e) => {
         if (!active) e.currentTarget.style.background = 'transparent'
@@ -1237,50 +1758,183 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div
+      className={`note-editor-shell${focusMode ? ' is-focus-mode' : ''}${typewriterMode && !readingMode ? ' is-typewriter-mode' : ''}${readingMode ? ' is-reading-mode' : ''}`}
+      style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
+    >
 
       {/* ─── Title Section ─── */}
       <div
+        className="note-title-section"
         style={{
           padding: '16px 24px 8px',
           borderBottom: `1px solid ${C.border}`,
         }}
       >
-        <input
-          key={note.id}
-          type="text"
-          value={titleDraft}
-          onChange={(e) => handleTitleChange(e.target.value)}
-          placeholder="笔记标题"
-          style={{
-            width: '100%',
-            fontSize: '20px',
-            fontWeight: 700,
-            border: 'none',
-            outline: 'none',
-            background: 'transparent',
-            color: C.text,
-            fontFamily: 'inherit',
-          }}
-        />
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            marginTop: '4px',
-            fontSize: '11px',
-            color: C.textMuted,
-          }}
-        >
-          <span>路径: {note.filePath}</span>
-          <span>·</span>
-          <span>更新于 {new Date(note.updatedAt).toLocaleString('zh-CN')}</span>
+        <div className="note-title-row">
+          {onBackToNotes && (
+            <button
+              type="button"
+              className="note-mobile-back"
+              onClick={onBackToNotes}
+              aria-label="返回笔记列表"
+              title="返回笔记列表"
+            >
+              <ArrowLeft size={18} aria-hidden="true" />
+            </button>
+          )}
+          <input
+            key={note.id}
+            type="text"
+            value={titleDraft}
+            onChange={(e) => handleTitleChange(e.target.value)}
+            readOnly={readingMode}
+            placeholder="笔记标题"
+            aria-label={readingMode ? '笔记标题，阅读模式下只读' : '笔记标题'}
+            style={{
+              minWidth: 0,
+              flex: 1,
+              width: 'auto',
+              fontSize: '20px',
+              fontWeight: 700,
+              border: 'none',
+              outline: 'none',
+              background: 'transparent',
+              color: C.text,
+              fontFamily: 'inherit',
+            }}
+          />
+          <button
+            type="button"
+            className={`note-title-action note-ai-toggle${aiPanelOpen ? ' is-active' : ''}`}
+            onClick={onToggleAiPanel}
+            aria-label={aiPanelOpen ? '关闭笔记 AI 助手' : '打开笔记 AI 助手'}
+            aria-pressed={aiPanelOpen}
+            title={aiPanelOpen ? '关闭笔记 AI 助手' : '笔记 AI 助手（Ctrl/Cmd+Shift+A）'}
+          >
+            <Sparkles size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`note-title-action note-typewriter-toggle${typewriterMode ? ' is-active' : ''}`}
+            onClick={onToggleTypewriterMode}
+            aria-label={typewriterMode ? '关闭打字机模式' : '开启打字机模式'}
+            aria-pressed={typewriterMode}
+            title={typewriterMode ? '关闭打字机模式' : '打字机模式：让光标保持在编辑区中部'}
+          >
+            <TextCursorInput size={16} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={`note-title-action note-reading-toggle${readingMode ? ' is-active' : ''}`}
+            onClick={onToggleReadingMode}
+            aria-label={readingMode ? '退出阅读模式' : '进入阅读模式'}
+            aria-pressed={readingMode}
+            title={readingMode ? '退出阅读模式（Esc）' : '阅读模式（Ctrl/Cmd+Shift+R）'}
+          >
+            {readingMode
+              ? <PencilLine size={16} aria-hidden="true" />
+              : <BookOpen size={16} aria-hidden="true" />}
+          </button>
+          <button
+            type="button"
+            className={`note-title-action${focusMode ? ' is-active' : ''}`}
+            onClick={onToggleFocusMode}
+            aria-label={focusMode ? '退出专注模式' : '进入专注模式'}
+            aria-pressed={focusMode}
+            title={focusMode ? '退出专注模式（Esc）' : '进入专注模式（Ctrl/Cmd+Shift+F）'}
+          >
+            {focusMode
+              ? <Minimize2 size={16} aria-hidden="true" />
+              : <Focus size={16} aria-hidden="true" />}
+          </button>
+          {onTogglePinned && (
+            <button
+              type="button"
+              className="note-title-action note-pin-toggle"
+              onClick={() => void onTogglePinned(note)}
+              aria-label={note.pinned ? '取消固定' : '固定到顶部'}
+              title={note.pinned ? '取消固定' : '固定到顶部'}
+              style={{
+                marginLeft: '8px',
+                background: note.pinned ? 'var(--app-primary-light)' : 'var(--app-surface)',
+                color: note.pinned ? C.primary : C.textMuted,
+              }}
+              onMouseEnter={(event) => {
+                event.currentTarget.style.background = 'var(--app-hover)'
+                event.currentTarget.style.color = note.pinned ? C.primary : C.text
+              }}
+              onMouseLeave={(event) => {
+                event.currentTarget.style.background = note.pinned ? 'var(--app-primary-light)' : 'var(--app-surface)'
+                event.currentTarget.style.color = note.pinned ? C.primary : C.textMuted
+              }}
+            >
+              {note.pinned
+                ? <PinOff size={16} aria-hidden="true" />
+                : <Pin size={16} aria-hidden="true" />}
+            </button>
+          )}
+        </div>
+        <div className="note-meta-row">
+          <span
+            className={`note-save-state is-${overallSaveState}`}
+            aria-live="polite"
+          >
+            {overallSaveState === 'saving' ? (
+              <Loader2 size={12} className="spin" aria-hidden="true" />
+            ) : overallSaveState === 'error' ? (
+              <AlertCircle size={12} aria-hidden="true" />
+            ) : (
+              <CheckCircle2 size={12} aria-hidden="true" />
+            )}
+            <span>
+              {overallSaveState === 'saving'
+                ? '保存中…'
+                : overallSaveState === 'error'
+                  ? '保存失败'
+                  : '已保存'}
+            </span>
+            <button
+              type="button"
+              className="note-save-button"
+              onClick={() => void saveAll()}
+              disabled={overallSaveState === 'saving'}
+              title="保存（Ctrl/Cmd+S）"
+              aria-label="立即保存笔记"
+            >
+              <Save size={12} aria-hidden="true" />
+              <span>保存</span>
+            </button>
+          </span>
+          <span
+            className="note-document-stats"
+            title="字符数不含空白；中文按字、英文按词统计；阅读时间按每分钟 300 词估算"
+          >
+            <span>{noteStats.characters.toLocaleString('zh-CN')} 字符</span>
+            <span aria-hidden="true">·</span>
+            <span>{noteStats.words.toLocaleString('zh-CN')} 词</span>
+            <span aria-hidden="true">·</span>
+            <span>{noteStats.paragraphs.toLocaleString('zh-CN')} 段</span>
+            <span aria-hidden="true">·</span>
+            <span>
+              {noteStats.readingMinutes > 0 ? `约 ${noteStats.readingMinutes} 分钟` : '0 分钟'}
+            </span>
+          </span>
+          <span
+            className="note-file-path"
+            title={note._isLocalFile && note.filePath ? note.filePath : '应用内笔记'}
+          >
+            {note._isLocalFile && note.filePath ? note.filePath : '应用内笔记'}
+          </span>
+          <span className="note-updated-at">
+            更新于 {new Date(note.updatedAt).toLocaleString('zh-CN')}
+          </span>
         </div>
       </div>
 
       {/* ─── Toolbar ─── */}
       <div
+        className="note-toolbar"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -1366,7 +2020,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               whiteSpace: 'nowrap',
             }}
             onMouseEnter={(e) => {
-              if (!showFontFamilyMenu) e.currentTarget.style.background = '#F1F5F9'
+              if (!showFontFamilyMenu) e.currentTarget.style.background = 'var(--app-hover)'
             }}
             onMouseLeave={(e) => {
               if (!showFontFamilyMenu) e.currentTarget.style.background = 'transparent'
@@ -1382,7 +2036,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                 position: 'fixed',
                 background: C.surface,
                 borderRadius: '10px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
+                boxShadow: C.shadow,
                 border: `1px solid ${C.border}`,
                 padding: '6px',
                 zIndex: 9999,
@@ -1418,7 +2072,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                     textAlign: 'left',
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : '#F8FAFC' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : 'var(--app-hover)' }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : 'transparent' }}
                 >
                   {label}
@@ -1451,7 +2105,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               whiteSpace: 'nowrap',
             }}
             onMouseEnter={(e) => {
-              if (!showFontSizeMenu) e.currentTarget.style.background = '#F1F5F9'
+              if (!showFontSizeMenu) e.currentTarget.style.background = 'var(--app-hover)'
             }}
             onMouseLeave={(e) => {
               if (!showFontSizeMenu) e.currentTarget.style.background = 'transparent'
@@ -1467,7 +2121,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                 position: 'fixed',
                 background: C.surface,
                 borderRadius: '10px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
+                boxShadow: C.shadow,
                 border: `1px solid ${C.border}`,
                 padding: '6px',
                 zIndex: 9999,
@@ -1503,7 +2157,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                     textAlign: 'left',
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : '#F8FAFC' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : 'var(--app-hover)' }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = isActive ? C.primaryLight : 'transparent' }}
                 >
                   {label}
@@ -1643,7 +2297,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                 left: 'auto',
                 background: C.surface,
                 borderRadius: '10px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
+                boxShadow: C.shadow,
                 border: `1px solid ${C.border}`,
                 padding: '10px',
                 zIndex: 9999,
@@ -1713,7 +2367,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               marginTop: '8px',
               background: C.surface,
               borderRadius: '10px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
+              boxShadow: C.shadow,
               border: `1px solid ${C.border}`,
               padding: '6px',
               zIndex: 40,
@@ -1744,7 +2398,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                     textAlign: 'left',
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--app-hover)' }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                 >
                   <Icon size={15} style={{ color: C.textSecondary }} />
@@ -1790,6 +2444,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         {searchOpen && (
           <div
+            className="note-search-popover"
             style={{
               position: 'absolute',
               top: 12,
@@ -1801,7 +2456,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               background: C.surface,
               border: `1px solid ${C.border}`,
               borderRadius: '10px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.13)',
+              boxShadow: C.shadow,
               padding: '6px 8px',
             }}
           >
@@ -1846,10 +2501,15 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
             </ToolBtn>
           </div>
         )}
-        <div style={{ height: '100%', overflowY: 'auto' }}>
+        <div
+          ref={editorScrollRef}
+          className="note-editor-scroll"
+          style={{ height: '100%', overflowY: 'auto' }}
+        >
           <EditorContent 
             editor={editor} 
             onContextMenu={(e) => {
+              if (readingMode) return
               if (editor.isActive('dataTable')) return // 智能表格自带工具栏，不弹编辑器菜单
               if (editor.isActive('table')) {
                 handleEditorContextMenu(e)
@@ -1871,7 +2531,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
             left: tableContextMenuPos.x,
             background: C.surface,
             borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            boxShadow: C.shadow,
             border: `1px solid ${C.border}`,
             padding: '4px',
             zIndex: 9999,
@@ -1896,7 +2556,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               justifyContent: 'center',
               transition: 'background 0.15s',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--app-hover)' }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
           >
             <X size={14} style={{ color: C.textMuted }} />
@@ -1926,7 +2586,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                 justifyContent: 'center',
                 transition: 'background 0.15s',
               }}
-              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#F1F5F9' }}
+              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'var(--app-hover)' }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
             >
               <Icon size={16} style={{ color: active ? C.primary : C.textSecondary }} />
@@ -1965,7 +2625,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                   marginTop: '4px',
                   background: C.surface,
                   borderRadius: '8px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  boxShadow: C.shadow,
                   border: `1px solid ${C.border}`,
                   padding: '8px',
                   zIndex: 10000,
@@ -2029,7 +2689,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                   marginTop: '4px',
                   background: C.surface,
                   borderRadius: '8px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  boxShadow: C.shadow,
                   border: `1px solid ${C.border}`,
                   padding: '8px',
                   zIndex: 10000,
@@ -2099,7 +2759,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                   marginTop: '4px',
                   background: C.surface,
                   borderRadius: '8px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  boxShadow: C.shadow,
                   border: `1px solid ${C.border}`,
                   padding: '8px',
                   zIndex: 10000,
@@ -2224,7 +2884,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                       textAlign: 'left',
                       transition: 'background 0.15s',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--app-hover)' }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                   >
                     <Icon size={14} style={{ color: C.primary }} />
@@ -2248,7 +2908,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                 padding: '6px 8px',
                 borderRadius: '6px',
                 border: showDeleteMenu ? `1px solid ${C.danger}` : `1px solid ${C.border}`,
-                background: showDeleteMenu ? 'rgba(239,68,68,0.1)' : C.surface,
+                background: showDeleteMenu ? C.dangerBg : C.surface,
                 cursor: 'pointer',
                 fontSize: '12px',
                 color: C.danger,
@@ -2272,7 +2932,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                   marginTop: '4px',
                   background: C.surface,
                   borderRadius: '8px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  boxShadow: C.shadow,
                   border: `1px solid ${C.border}`,
                   padding: '4px',
                   zIndex: 10000,
@@ -2306,7 +2966,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                       textAlign: 'left',
                       transition: 'background 0.15s',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.1)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = C.dangerBg }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                   >
                     <Trash2 size={14} />
@@ -2329,7 +2989,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
             left: textContextMenuPos.x,
             background: C.surface,
             borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            boxShadow: C.shadow,
             border: `1px solid ${C.border}`,
             padding: '4px',
             zIndex: 9999,
@@ -2354,7 +3014,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               justifyContent: 'center',
               transition: 'background 0.15s',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--app-hover)' }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
           >
             <X size={14} style={{ color: C.textMuted }} />
@@ -2385,7 +3045,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                 justifyContent: 'center',
                 transition: 'background 0.15s',
               }}
-              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#F1F5F9' }}
+              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'var(--app-hover)' }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
             >
               <Icon size={16} style={{ color: active ? C.primary : C.textSecondary }} />
@@ -2451,7 +3111,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                   marginTop: '4px',
                   background: C.surface,
                   borderRadius: '8px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  boxShadow: C.shadow,
                   border: `1px solid ${C.border}`,
                   padding: '4px',
                   zIndex: 10000,
@@ -2482,7 +3142,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                       textAlign: 'left',
                       transition: 'background 0.15s',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--app-hover)' }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                   >
                     {label}
@@ -2525,7 +3185,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                   marginTop: '4px',
                   background: C.surface,
                   borderRadius: '8px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  boxShadow: C.shadow,
                   border: `1px solid ${C.border}`,
                   padding: '4px',
                   zIndex: 10000,
@@ -2556,7 +3216,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                       textAlign: 'left',
                       transition: 'background 0.15s',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--app-hover)' }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                   >
                     {label}
@@ -2598,7 +3258,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
                   marginTop: '4px',
                   background: C.surface,
                   borderRadius: '8px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  boxShadow: C.shadow,
                   border: `1px solid ${C.border}`,
                   padding: '8px',
                   zIndex: 10000,
@@ -2636,6 +3296,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
 
       {/* ─── Tags Bar ─── */}
       <div
+        className="note-footer"
         style={{
           padding: '8px 24px',
           borderTop: `1px solid ${C.border}`,
@@ -2645,7 +3306,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
         }}
       >
         {/* Left: History buttons */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div className="note-footer-actions">
           <button
             onClick={handleCreateHistory}
             disabled={isCreatingHistory}
@@ -2700,7 +3361,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               transition: 'all 0.15s',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(37,99,235,0.2)'
+              e.currentTarget.style.background = C.primaryLightHover
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = C.primaryLight
@@ -2729,7 +3390,7 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
               transition: 'all 0.15s',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#F1F5F9'
+              e.currentTarget.style.background = 'var(--app-hover)'
               e.currentTarget.style.borderColor = C.textSecondary
             }}
             onMouseLeave={(e) => {
@@ -2743,24 +3404,11 @@ export default function NoteEditor({ note, onLocalPersist, onLocalTitlePersist, 
         </div>
 
         {/* Right: Tags */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '11px', color: C.textMuted }}>标签:</span>
-          {note.tags.map((tag) => (
-            <span
-              key={tag}
-              style={{
-                fontSize: '11px',
-                padding: '2px 8px',
-                borderRadius: '999px',
-                background: C.primaryLight,
-                color: C.primary,
-                fontWeight: 500,
-              }}
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
+        <TagEditor
+          tags={note.tags || []}
+          suggestions={tagSuggestions}
+          onChange={handleTagsChange}
+        />
       </div>
     </div>
   )

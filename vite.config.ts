@@ -18,6 +18,11 @@ export default defineConfig({
   server: {
     port: 5173,
     open: true,
+    watch: {
+      // Browser verification profiles can hold locked files (for example
+      // Chromium's Cookies database) and must not be watched by Vite.
+      ignored: ['**/artifacts/**', '**/dist/**'],
+    },
   },
   build: {
     outDir: 'dist',

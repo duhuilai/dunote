@@ -1,14 +1,50 @@
-import { useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import { useAppStore } from '@/store'
 import { Users, CheckSquare, Clock, TrendingUp, Download, Filter } from 'lucide-react'
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts'
+import type { LucideIcon } from 'lucide-react'
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from 'recharts'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeFile } from '@tauri-apps/plugin-fs'
 
-/** CSV 字段转义：含逗号/引号/换行时用双引号包裹，内部引号加倍 */
-function csvCell(v: unknown): string {
-  const s = String(v ?? '')
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+function csvCell(value: unknown): string {
+  const text = String(value ?? '')
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+const chartTooltipStyle: CSSProperties = {
+  padding: '8px 10px',
+  border: '1px solid var(--app-border)',
+  borderRadius: '8px',
+  background: 'var(--app-surface-elevated)',
+  boxShadow: 'var(--app-shadow)',
+  color: 'var(--app-text)',
+  fontSize: '12px',
+}
+
+const tableHeadStyle: CSSProperties = {
+  padding: '12px 20px',
+  color: 'var(--app-text-secondary)',
+  fontSize: '12px',
+  fontWeight: 600,
+  textAlign: 'left',
+  whiteSpace: 'nowrap',
+}
+
+const tableCellStyle: CSSProperties = {
+  padding: '12px 20px',
+  color: 'var(--app-text-secondary)',
+  fontSize: '13px',
 }
 
 export default function AnalyticsPage() {
@@ -16,229 +52,439 @@ export default function AnalyticsPage() {
   const [filterPerson, setFilterPerson] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
 
-  const activeCount = personnel.filter((p) => p.status === 'active').length
+  const activeCount = personnel.filter((person) => person.status === 'active').length
   const totalTasks = tasks.length
-  const completedTasks = tasks.filter((t) => t.status === 'completed').length
-  const runningTasks = tasks.filter((t) => t.status === 'running').length
+  const completedTasks = tasks.filter((task) => task.status === 'completed').length
+  const runningTasks = tasks.filter((task) => task.status === 'running').length
+  const pendingTasks = tasks.filter((task) => task.status === 'pending').length
 
-  // Task status pie data
   const pieData = [
-    { name: '已完成', value: completedTasks, color: '#10B981' },
-    { name: '进行中', value: runningTasks, color: '#2563EB' },
-    { name: '待开始', value: tasks.filter((t) => t.status === 'pending').length, color: '#F59E0B' },
+    { name: '已完成', value: completedTasks, color: 'var(--app-success)' },
+    { name: '进行中', value: runningTasks, color: 'var(--app-primary)' },
+    { name: '待开始', value: pendingTasks, color: 'var(--app-warning)' },
   ]
 
-  // Person task bar data
-  const personTaskData = personnel.filter((p) => p.status === 'active').map((p) => {
-    const personTasks = tasks.filter((t) => t.responsiblePerson === p.name || t.participants.includes(p.name))
-    return {
-      name: p.name,
-      total: personTasks.length,
-      completed: personTasks.filter((t) => t.status === 'completed').length,
-      running: personTasks.filter((t) => t.status === 'running').length,
-    }
-  })
+  const personTaskData = useMemo(
+    () =>
+      personnel
+        .filter((person) => person.status === 'active')
+        .map((person) => {
+          const personTasks = tasks.filter(
+            (task) => task.responsiblePerson === person.name || task.participants.includes(person.name),
+          )
+          return {
+            name: person.name,
+            total: personTasks.length,
+            completed: personTasks.filter((task) => task.status === 'completed').length,
+            running: personTasks.filter((task) => task.status === 'running').length,
+          }
+        }),
+    [personnel, tasks],
+  )
 
-  // Filtered person list for the table
-  const filteredPersonnel = personnel.filter((p) => {
-    if (filterPerson && !p.name.includes(filterPerson)) return false
-    if (filterStatus && p.status !== filterStatus) return false
-    return true
-  })
+  const filteredPersonnel = useMemo(
+    () =>
+      personnel.filter((person) => {
+        if (filterPerson && !person.name.includes(filterPerson)) return false
+        if (filterStatus && person.status !== filterStatus) return false
+        return true
+      }),
+    [filterPerson, filterStatus, personnel],
+  )
 
   const handleExport = async () => {
     try {
       const headers = ['姓名', '职位', '总任务', '已完成', '进行中']
-      const rows = filteredPersonnel.map((p) => {
-        const pt = tasks.filter((t) => t.responsiblePerson === p.name || t.participants.includes(p.name))
-        return [p.name, p.position, pt.length, pt.filter((t) => t.status === 'completed').length, pt.filter((t) => t.status === 'running').length]
+      const rows = filteredPersonnel.map((person) => {
+        const personTasks = tasks.filter(
+          (task) => task.responsiblePerson === person.name || task.participants.includes(person.name),
+        )
+        return [
+          person.name,
+          person.position,
+          personTasks.length,
+          personTasks.filter((task) => task.status === 'completed').length,
+          personTasks.filter((task) => task.status === 'running').length,
+        ]
       })
-      const csv = [headers, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')
-      // 走 Tauri 原生保存对话框 + fs 写盘：
-      // 之前用 <a download> + blob URL，在 WebView 内不一定能真正落盘（无下载目录权限时静默失败）。
+      const csv = [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')
       const filePath = await save({
         title: '导出统计',
         filters: [{ name: 'CSV 表格', extensions: ['csv'] }],
         defaultPath: 'duNote_分析统计.csv',
       })
-      if (!filePath) return // 用户取消
-      // BOM 保证 Excel 正确识别 UTF-8 中文
+      if (!filePath) return
+
       const bytes = new TextEncoder().encode('\uFEFF' + csv)
       await writeFile(filePath, bytes)
       showToast(`已导出到 ${filePath}`, 'success')
-    } catch (err) {
-      console.error('[Analytics] 导出 CSV 失败:', err)
-      showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    } catch (error) {
+      console.error('[Analytics] 导出 CSV 失败:', error)
+      showToast(`导出失败：${error instanceof Error ? error.message : String(error)}`, 'error')
     }
   }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* Header */}
-      <div style={{ padding: '16px 24px', borderBottom: '1px solid #E2E8F0', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#1E293B', margin: 0 }}>分析统计</h2>
+      <header
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          padding: '16px 24px',
+          borderBottom: '1px solid var(--app-border)',
+          background: 'var(--app-surface)',
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <h2 style={{ margin: 0, color: 'var(--app-text)', fontSize: '18px', fontWeight: 700 }}>分析统计</h2>
+        </div>
         <button
+          type="button"
           onClick={handleExport}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: '#10B981', color: '#FFFFFF', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+            flexShrink: 0,
+            padding: '8px 16px',
+            border: 0,
+            borderRadius: '8px',
+            background: 'var(--app-success)',
+            color: 'var(--app-on-primary)',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: '13px',
+            fontWeight: 600,
+          }}
         >
-          <Download size={15} />
+          <Download size={15} aria-hidden="true" />
           导出 Excel
         </button>
-      </div>
+      </header>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
-        {/* Overview Cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+      <div style={{ flex: 1, minHeight: 0, padding: '24px', overflowY: 'auto' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: '16px',
+            marginBottom: '24px',
+          }}
+        >
           <OverviewCard icon={Users} label="在岗人员" value={activeCount} color="primary" />
           <OverviewCard icon={CheckSquare} label="总任务数" value={totalTasks} color="accent" />
           <OverviewCard icon={CheckSquare} label="已完成" value={completedTasks} color="success" />
           <OverviewCard icon={Clock} label="进行中" value={runningTasks} color="warning" />
         </div>
 
-        {/* Charts */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '24px' }}>
-          {/* Pie Chart */}
-          <div style={{ background: '#FFFFFF', borderRadius: '12px', border: '1px solid #E2E8F0', padding: '20px' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#1E293B', margin: '0 0 16px 0' }}>任务状态分布</h3>
-            <div style={{ height: '200px' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
-                    {pieData.map((entry, index) => (
-                      <Cell key={index} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginTop: '8px' }}>
-              {pieData.map((d) => (
-                <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#64748B' }}>
-                  <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: d.color }} />
-                  {d.name} ({d.value})
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
+            gap: '16px',
+            marginBottom: '24px',
+          }}
+        >
+          <section style={cardStyle}>
+            <h3 style={cardTitleStyle}>任务状态分布</h3>
+            {totalTasks === 0 ? (
+              <ChartEmptyState />
+            ) : (
+              <>
+                <div style={{ height: '210px' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={pieData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={80}
+                        paddingAngle={4}
+                        dataKey="value"
+                        stroke="var(--app-surface)"
+                      >
+                        {pieData.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={chartTooltipStyle}
+                        itemStyle={{ color: 'var(--app-text-secondary)' }}
+                        labelStyle={{ color: 'var(--app-text)' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
-              ))}
-            </div>
-          </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '12px 16px', marginTop: '8px' }}>
+                  {pieData.map((entry) => (
+                    <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--app-text-secondary)', fontSize: '12px' }}>
+                      <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: entry.color }} />
+                      {entry.name} ({entry.value})
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
 
-          {/* Bar Chart */}
-          <div style={{ background: '#FFFFFF', borderRadius: '12px', border: '1px solid #E2E8F0', padding: '20px' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#1E293B', margin: '0 0 16px 0' }}>人员任务统计</h3>
-            <div style={{ height: '200px' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={personTaskData} barGap={2}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                  <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#64748B' }} />
-                  <YAxis tick={{ fontSize: 12, fill: '#64748B' }} />
-                  <Tooltip />
-                  <Bar dataKey="completed" name="已完成" fill="#10B981" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="running" name="进行中" fill="#2563EB" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          <section style={cardStyle}>
+            <h3 style={cardTitleStyle}>人员任务统计</h3>
+            {personTaskData.length === 0 ? (
+              <ChartEmptyState />
+            ) : (
+              <div style={{ height: '238px' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={personTaskData} barGap={2} margin={{ top: 8, right: 8, bottom: 0, left: -12 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--app-border)" vertical={false} />
+                    <XAxis
+                      dataKey="name"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12, fill: 'var(--app-text-secondary)' }}
+                    />
+                    <YAxis
+                      allowDecimals={false}
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 12, fill: 'var(--app-text-secondary)' }}
+                    />
+                    <Tooltip
+                      contentStyle={chartTooltipStyle}
+                      itemStyle={{ color: 'var(--app-text-secondary)' }}
+                      labelStyle={{ color: 'var(--app-text)' }}
+                      cursor={{ fill: 'var(--app-hover)' }}
+                    />
+                    <Bar dataKey="completed" name="已完成" fill="var(--app-success)" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="running" name="进行中" fill="var(--app-primary)" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </section>
         </div>
 
-        {/* Filter & Table */}
-        <div style={{ background: '#FFFFFF', borderRadius: '12px', border: '1px solid #E2E8F0', overflow: 'hidden' }}>
-          <div style={{ padding: '12px 20px', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <Filter size={15} style={{ color: '#94A3B8' }} />
+        <section style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              flexWrap: 'wrap',
+              padding: '12px 20px',
+              borderBottom: '1px solid var(--app-border)',
+            }}
+          >
+            <Filter size={15} aria-hidden="true" style={{ color: 'var(--app-text-muted)' }} />
             <input
               value={filterPerson}
-              onChange={(e) => setFilterPerson(e.target.value)}
-              style={{ padding: '6px 12px', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '13px', outline: 'none', width: '160px', fontFamily: 'inherit' }}
+              onChange={(event) => setFilterPerson(event.target.value)}
+              aria-label="按姓名筛选"
               placeholder="按姓名筛选"
+              style={filterControlStyle}
             />
             <select
               value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              style={{ padding: '6px 12px', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '13px', outline: 'none', background: '#FFFFFF', fontFamily: 'inherit' }}
+              onChange={(event) => setFilterStatus(event.target.value)}
+              aria-label="按人员状态筛选"
+              style={filterControlStyle}
             >
               <option value="">全部状态</option>
               <option value="active">在岗</option>
               <option value="resigned">离职</option>
             </select>
+            <span style={{ marginLeft: 'auto', color: 'var(--app-text-muted)', fontSize: '12px' }}>
+              {filteredPersonnel.length} 人
+            </span>
           </div>
-          <table style={{ width: '100%' }}>
-            <thead>
-              <tr style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
-                <th style={{ textAlign: 'left', padding: '12px 20px', fontSize: '12px', fontWeight: 600, color: '#64748B' }}>姓名</th>
-                <th style={{ textAlign: 'left', padding: '12px 20px', fontSize: '12px', fontWeight: 600, color: '#64748B' }}>职位</th>
-                <th style={{ textAlign: 'left', padding: '12px 20px', fontSize: '12px', fontWeight: 600, color: '#64748B' }}>状态</th>
-                <th style={{ textAlign: 'left', padding: '12px 20px', fontSize: '12px', fontWeight: 600, color: '#64748B' }}>总任务</th>
-                <th style={{ textAlign: 'left', padding: '12px 20px', fontSize: '12px', fontWeight: 600, color: '#64748B' }}>已完成</th>
-                <th style={{ textAlign: 'left', padding: '12px 20px', fontSize: '12px', fontWeight: 600, color: '#64748B' }}>进行中</th>
-                <th style={{ textAlign: 'left', padding: '12px 20px', fontSize: '12px', fontWeight: 600, color: '#64748B' }}>完成率</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredPersonnel.map((p) => {
-                const pt = tasks.filter((t) => t.responsiblePerson === p.name || t.participants.includes(p.name))
-                const completed = pt.filter((t) => t.status === 'completed').length
-                const running = pt.filter((t) => t.status === 'running').length
-                const rate = pt.length > 0 ? Math.round((completed / pt.length) * 100) : 0
-                return (
-                  <tr key={p.id} style={{ borderBottom: '1px solid #E2E8F0' }}>
-                    <td style={{ padding: '12px 20px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontSize: '11px', fontWeight: 600 }}>{p.name[0]}</div>
-                        <span style={{ fontSize: '13px', fontWeight: 500, color: '#1E293B' }}>{p.name}</span>
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 20px', fontSize: '13px', color: '#64748B' }}>{p.position}</td>
-                    <td style={{ padding: '12px 20px' }}>
-                      <span style={{
-                        padding: '2px 8px',
-                        borderRadius: '9999px',
-                        fontSize: '11px',
-                        fontWeight: 500,
-                        background: p.status === 'active' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-                        color: p.status === 'active' ? '#10B981' : '#EF4444',
-                      }}>
-                        {p.status === 'active' ? '在岗' : '离职'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '12px 20px', fontSize: '13px', color: '#1E293B', fontWeight: 500 }}>{pt.length}</td>
-                    <td style={{ padding: '12px 20px', fontSize: '13px', color: '#10B981', fontWeight: 500 }}>{completed}</td>
-                    <td style={{ padding: '12px 20px', fontSize: '13px', color: '#2563EB', fontWeight: 500 }}>{running}</td>
-                    <td style={{ padding: '12px 20px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ width: '64px', height: '6px', background: '#F8FAFC', borderRadius: '9999px', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', background: '#10B981', borderRadius: '9999px', width: `${rate}%` }} />
-                        </div>
-                        <span style={{ fontSize: '12px', color: '#64748B' }}>{rate}%</span>
-                      </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: '760px', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--app-border)', background: 'var(--app-bg)' }}>
+                  <th style={tableHeadStyle}>姓名</th>
+                  <th style={tableHeadStyle}>职位</th>
+                  <th style={tableHeadStyle}>状态</th>
+                  <th style={tableHeadStyle}>总任务</th>
+                  <th style={tableHeadStyle}>已完成</th>
+                  <th style={tableHeadStyle}>进行中</th>
+                  <th style={tableHeadStyle}>完成率</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPersonnel.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ padding: '40px 20px', color: 'var(--app-text-muted)', fontSize: '13px', textAlign: 'center' }}>
+                      没有符合当前筛选条件的人员
                     </td>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                ) : (
+                  filteredPersonnel.map((person) => {
+                    const personTasks = tasks.filter(
+                      (task) => task.responsiblePerson === person.name || task.participants.includes(person.name),
+                    )
+                    const completed = personTasks.filter((task) => task.status === 'completed').length
+                    const running = personTasks.filter((task) => task.status === 'running').length
+                    const rate = personTasks.length > 0 ? Math.round((completed / personTasks.length) * 100) : 0
+                    const isActive = person.status === 'active'
+
+                    return (
+                      <tr key={person.id} style={{ borderBottom: '1px solid var(--app-border)' }}>
+                        <td style={{ ...tableCellStyle, color: 'var(--app-text)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span
+                              aria-hidden="true"
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                width: '28px',
+                                height: '28px',
+                                flexShrink: 0,
+                                borderRadius: '50%',
+                                background: 'var(--app-primary)',
+                                color: 'var(--app-on-primary)',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                              }}
+                            >
+                              {person.name[0]}
+                            </span>
+                            <span style={{ color: 'var(--app-text)', fontSize: '13px', fontWeight: 500 }}>{person.name}</span>
+                          </div>
+                        </td>
+                        <td style={tableCellStyle}>{person.position}</td>
+                        <td style={tableCellStyle}>
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              padding: '3px 9px',
+                              borderRadius: '9999px',
+                              background: isActive ? 'var(--app-success-bg)' : 'var(--app-danger-bg)',
+                              color: isActive ? 'var(--app-success)' : 'var(--app-danger)',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                            }}
+                          >
+                            {isActive ? '在岗' : '离职'}
+                          </span>
+                        </td>
+                        <td style={{ ...tableCellStyle, color: 'var(--app-text)', fontWeight: 600 }}>{personTasks.length}</td>
+                        <td style={{ ...tableCellStyle, color: 'var(--app-success)', fontWeight: 600 }}>{completed}</td>
+                        <td style={{ ...tableCellStyle, color: 'var(--app-primary)', fontWeight: 600 }}>{running}</td>
+                        <td style={tableCellStyle}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ width: '72px', height: '6px', overflow: 'hidden', borderRadius: '9999px', background: 'var(--app-border)' }}>
+                              <div style={{ width: `${rate}%`, height: '100%', borderRadius: '9999px', background: 'var(--app-success)' }} />
+                            </div>
+                            <span style={{ color: 'var(--app-text-secondary)', fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>{rate}%</span>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </div>
   )
 }
 
-function OverviewCard({ icon: Icon, label, value, color }: { icon: any; label: string; value: number; color: string }) {
-  const colors: Record<string, { bg: string; text: string }> = {
-    primary: { bg: 'rgba(37,99,235,0.1)', text: '#2563EB' },
-    accent: { bg: 'rgba(6,182,212,0.1)', text: '#06B6D4' },
-    success: { bg: 'rgba(16,185,129,0.1)', text: '#10B981' },
-    warning: { bg: 'rgba(245,158,11,0.1)', text: '#F59E0B' },
-  }
-  const c = colors[color]
+const cardStyle: CSSProperties = {
+  minWidth: 0,
+  padding: '20px',
+  border: '1px solid var(--app-border)',
+  borderRadius: '12px',
+  background: 'var(--app-surface)',
+}
+
+const cardTitleStyle: CSSProperties = {
+  margin: '0 0 16px',
+  color: 'var(--app-text)',
+  fontSize: '14px',
+  fontWeight: 600,
+}
+
+const filterControlStyle: CSSProperties = {
+  width: '160px',
+  maxWidth: '100%',
+  padding: '7px 11px',
+  border: '1px solid var(--app-border)',
+  borderRadius: '8px',
+  outline: 'none',
+  background: 'var(--app-surface)',
+  color: 'var(--app-text)',
+  fontFamily: 'inherit',
+  fontSize: '13px',
+}
+
+function ChartEmptyState() {
   return (
-    <div style={{ background: '#FFFFFF', borderRadius: '12px', border: '1px solid #E2E8F0', padding: '16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-        <div style={{ width: '36px', height: '36px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: c.bg }}>
-          <Icon size={18} style={{ color: c.text }} />
-        </div>
-        <TrendingUp size={14} style={{ color: '#94A3B8', marginLeft: 'auto' }} />
-      </div>
-      <div style={{ fontSize: '24px', fontWeight: 700, color: '#1E293B' }}>{value}</div>
-      <div style={{ fontSize: '12px', color: '#94A3B8', marginTop: '2px' }}>{label}</div>
+    <div
+      role="status"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '238px',
+        color: 'var(--app-text-muted)',
+        fontSize: '13px',
+      }}
+    >
+      暂无数据
     </div>
+  )
+}
+
+type OverviewColor = 'primary' | 'accent' | 'success' | 'warning'
+
+function OverviewCard({
+  icon: Icon,
+  label,
+  value,
+  color,
+}: {
+  icon: LucideIcon
+  label: string
+  value: number
+  color: OverviewColor
+}) {
+  const colorMap = {
+    primary: { bg: 'var(--app-primary-light)', text: 'var(--app-primary)' },
+    accent: { bg: 'color-mix(in srgb, var(--app-accent) 12%, transparent)', text: 'var(--app-accent)' },
+    success: { bg: 'var(--app-success-bg)', text: 'var(--app-success)' },
+    warning: { bg: 'var(--app-warning-bg)', text: 'var(--app-warning)' },
+  }
+  const selectedColor = colorMap[color]
+
+  return (
+    <article style={{ ...cardStyle, padding: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+        <span
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '36px',
+            height: '36px',
+            borderRadius: '8px',
+            background: selectedColor.bg,
+            color: selectedColor.text,
+          }}
+        >
+          <Icon size={18} aria-hidden="true" />
+        </span>
+        <TrendingUp size={14} aria-hidden="true" style={{ marginLeft: 'auto', color: 'var(--app-text-muted)' }} />
+      </div>
+      <div style={{ color: 'var(--app-text)', fontSize: '24px', fontWeight: 700 }}>{value}</div>
+      <div style={{ marginTop: '2px', color: 'var(--app-text-muted)', fontSize: '12px' }}>{label}</div>
+    </article>
   )
 }

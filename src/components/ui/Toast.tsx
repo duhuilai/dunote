@@ -4,22 +4,22 @@ import { CheckCircle2, XCircle, Info } from 'lucide-react'
 
 const STYLE: Record<string, { bg: string; color: string; border: string; icon: ReactNode }> = {
   success: {
-    bg: '#ECFDF5',
-    color: '#047857',
-    border: '#6EE7B7',
-    icon: <CheckCircle2 size={18} style={{ color: '#10B981' }} />,
+    bg: 'var(--app-success-bg)',
+    color: 'var(--app-success)',
+    border: 'var(--app-success-border)',
+    icon: <CheckCircle2 size={18} style={{ color: 'var(--app-success)' }} />,
   },
   error: {
-    bg: '#FEF2F2',
-    color: '#B91C1C',
-    border: '#FCA5A5',
-    icon: <XCircle size={18} style={{ color: '#EF4444' }} />,
+    bg: 'var(--app-danger-bg)',
+    color: 'var(--app-danger)',
+    border: 'var(--app-danger-border)',
+    icon: <XCircle size={18} style={{ color: 'var(--app-danger)' }} />,
   },
   info: {
-    bg: '#EFF6FF',
-    color: '#1D4ED8',
-    border: '#93C5FD',
-    icon: <Info size={18} style={{ color: '#3B82F6' }} />,
+    bg: 'var(--app-info-bg)',
+    color: 'var(--app-primary)',
+    border: 'var(--app-info-border)',
+    icon: <Info size={18} style={{ color: 'var(--app-primary)' }} />,
   },
 }
 
@@ -33,9 +33,18 @@ export default function Toast() {
   return (
     <div
       onClick={hideToast}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          hideToast()
+        }
+      }}
+      role={toast.type === 'error' ? 'alert' : 'status'}
+      aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
+      tabIndex={0}
       style={{
         position: 'fixed',
-        top: '24px',
+        top: 'max(16px, env(safe-area-inset-top))',
         left: '50%',
         transform: 'translateX(-50%)',
         zIndex: 9999,
@@ -47,17 +56,19 @@ export default function Toast() {
         background: s.bg,
         color: s.color,
         border: `1px solid ${s.border}`,
-        boxShadow: '0 10px 30px rgba(0,0,0,0.12)',
+        boxShadow: 'var(--app-shadow)',
         fontSize: '14px',
         fontWeight: 500,
         fontFamily: 'inherit',
         cursor: 'pointer',
-        userSelect: 'none',
+        boxSizing: 'border-box',
+        maxWidth: 'calc(100vw - 32px)',
+        overflowWrap: 'anywhere',
         animation: 'toastIn 0.2s ease-out',
       }}
     >
-      {s.icon}
-      <span>{toast.message}</span>
+      <span style={{ flexShrink: 0, display: 'flex' }}>{s.icon}</span>
+      <span style={{ minWidth: 0, lineHeight: 1.45 }}>{toast.message}</span>
       <style>{`@keyframes toastIn { from { opacity: 0; transform: translate(-50%, -8px); } to { opacity: 1; transform: translate(-50%, 0); } }`}</style>
     </div>
   )

@@ -4,20 +4,20 @@ import { Users, UserCheck, UserX, Plus, X, Phone, Calendar, DollarSign, Edit3, T
 import DateField from '@/components/ui/DateField'
 
 const colors = {
-  primary: '#2563EB',
-  primaryHover: '#1D4ED8',
-  primaryLight: 'rgba(37,99,235,0.1)',
-  bg: '#F8FAFC',
-  border: '#E2E8F0',
-  text: '#1E293B',
-  textSecondary: '#64748B',
-  textMuted: '#94A3B8',
-  success: '#10B981',
-  successLight: '#ECFDF5',
-  warning: '#F59E0B',
-  danger: '#EF4444',
-  dangerLight: '#FEF2F2',
-  surface: '#FFFFFF',
+  primary: 'var(--app-primary)',
+  primaryHover: 'var(--app-primary-hover)',
+  primaryLight: 'var(--app-primary-light)',
+  bg: 'var(--app-bg)',
+  border: 'var(--app-border)',
+  text: 'var(--app-text)',
+  textSecondary: 'var(--app-text-secondary)',
+  textMuted: 'var(--app-text-muted)',
+  success: 'var(--app-success)',
+  successLight: 'var(--app-success-bg)',
+  warning: 'var(--app-warning)',
+  danger: 'var(--app-danger)',
+  dangerLight: 'var(--app-danger-bg)',
+  surface: 'var(--app-surface)',
 }
 
 // 与 DateField 组件共享的配色（缺省用 primaryLight）
@@ -114,7 +114,7 @@ export default function PersonnelPage() {
             setForm({ name: '', position: '', hireDate: '', resignDate: '', monthlySalary: '', phone: '', status: 'active' })
             setShowModal(true)
           }}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: 'var(--app-on-primary)', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
         >
           <Plus size={15} />
           新增人员
@@ -157,7 +157,7 @@ export default function PersonnelPage() {
                 }}
               >
                 {f.label}
-                <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '9999px', background: selected ? colors.primary : colors.bg, color: selected ? '#fff' : colors.textMuted }}>
+                <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '9999px', background: selected ? colors.primary : colors.bg, color: selected ? 'var(--app-on-primary)' : colors.textMuted }}>
                   {f.count}
                 </span>
               </button>
@@ -185,7 +185,7 @@ export default function PersonnelPage() {
                 <tr key={p.id} style={{ borderBottom: `1px solid ${colors.border}` }}>
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: colors.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '12px', fontWeight: 600, flexShrink: 0 }}>
+                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: colors.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--app-on-primary)', fontSize: '12px', fontWeight: 600, flexShrink: 0 }}>
                         {p.name[0]}
                       </div>
                       <span style={{ fontSize: '13px', fontWeight: 500, color: colors.text }}>{p.name}</span>
@@ -251,8 +251,8 @@ export default function PersonnelPage() {
       {/* Add/Edit Modal */}
       {showModal && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} onClick={() => { setShowModal(false); setEditingId(null) }} />
-          <div style={{ position: 'relative', background: colors.surface, borderRadius: '16px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', width: '480px' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'var(--app-overlay)' }} onClick={() => { setShowModal(false); setEditingId(null) }} />
+          <div style={{ position: 'relative', background: colors.surface, borderRadius: '16px', boxShadow: 'var(--app-shadow)', width: '480px', maxWidth: 'calc(100vw - 32px)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 24px', borderBottom: `1px solid ${colors.border}` }}>
               <h3 style={{ fontSize: '16px', fontWeight: 600, color: colors.text, margin: 0 }}>{editingId ? '编辑人员' : '新增人员'}</h3>
               <button onClick={() => { setShowModal(false); setEditingId(null) }} style={{ padding: '4px', borderRadius: '8px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>
@@ -291,7 +291,7 @@ export default function PersonnelPage() {
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', padding: '16px 24px', borderTop: `1px solid ${colors.border}` }}>
               <button onClick={() => { setShowModal(false); setEditingId(null) }} style={{ padding: '8px 16px', borderRadius: '8px', background: colors.bg, color: colors.text, fontSize: '13px', fontWeight: 500, border: `1px solid ${colors.border}`, cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
-              <button onClick={handleSave} style={{ padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: '#fff', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>{editingId ? '保存' : '确认添加'}</button>
+              <button onClick={handleSave} style={{ padding: '8px 16px', borderRadius: '8px', background: colors.primary, color: 'var(--app-on-primary)', fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>{editingId ? '保存' : '确认添加'}</button>
             </div>
           </div>
         </div>

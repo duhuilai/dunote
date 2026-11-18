@@ -89,7 +89,7 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           width: variant === 'compact' ? '100%' : 'auto',
           padding: '8px 16px', borderRadius: 8,
-          border: 'none', background: '#166534', color: '#fff',
+          border: 'none', background: 'var(--app-success)', color: 'var(--app-on-primary)',
           fontSize: variant === 'compact' ? 12 : 13, fontWeight: 600,
           cursor: installing ? 'default' : 'pointer', fontFamily: 'inherit',
           opacity: installing ? 0.6 : 1,
@@ -104,7 +104,7 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
           {installBtn}
           {installHint && (
-            <div style={{ fontSize: 11, color: '#166534', lineHeight: 1.5 }}>{installHint}</div>
+            <div style={{ fontSize: 11, color: 'var(--app-success)', lineHeight: 1.5 }}>{installHint}</div>
           )}
         </div>
       )
@@ -113,15 +113,15 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {installBtn}
-          <span style={{ fontSize: 12, color: '#166534' }}>
+          <span style={{ fontSize: 12, color: 'var(--app-success)' }}>
             安装包已下载完成{updateInfo.assetName ? `（${updateInfo.assetName}）` : ''}
           </span>
         </div>
         {installHint && (
           <div
             style={{
-              fontSize: 12, color: '#166534', lineHeight: 1.6,
-              background: '#F0FDF4', border: '1px solid #BBF7D0',
+              fontSize: 12, color: 'var(--app-success)', lineHeight: 1.6,
+              background: 'var(--app-success-bg)', border: '1px solid var(--app-success-border)',
               borderRadius: 8, padding: '8px 12px',
             }}
           >
@@ -141,7 +141,7 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
           width: variant === 'compact' ? '100%' : 'auto',
           padding: '8px 16px', borderRadius: 8,
-          border: '1px solid #2563EB', background: '#fff', color: '#2563EB',
+          border: '1px solid var(--app-primary)', background: 'var(--app-surface)', color: 'var(--app-primary)',
           fontSize: variant === 'compact' ? 12 : 13, fontWeight: 600,
           cursor: 'pointer', fontFamily: 'inherit',
         }}
@@ -153,7 +153,7 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
     if (variant === 'compact') return retryBtn
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={{ fontSize: 12, color: '#991B1B', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ fontSize: 12, color: 'var(--app-danger)', display: 'flex', alignItems: 'center', gap: 6 }}>
           <AlertCircle size={14} />
           {dl.error || '下载失败'}
         </div>
@@ -172,7 +172,7 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
     if (variant === 'compact') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: '#166534' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: 'var(--app-success)' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <RefreshCw size={12} className="spin" />
               {pctText}
@@ -186,7 +186,7 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
     }
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: '#166534' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: 'var(--app-success)' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <RefreshCw size={14} className="spin" />
             正在下载更新…
@@ -196,7 +196,7 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
         <div className="dl-progress-track">
           <div className={fillClass} style={{ width: `${dl.progress}%` }} />
         </div>
-        <div style={{ fontSize: 11, color: '#64748B', fontVariantNumeric: 'tabular-nums' }}>{sizeText}</div>
+        <div style={{ fontSize: 11, color: 'var(--app-text-muted)', fontVariantNumeric: 'tabular-nums' }}>{sizeText}</div>
       </div>
     )
   }
@@ -210,9 +210,9 @@ export default function UpdateDownloader({ variant = 'full' }: Props) {
         width: variant === 'compact' ? '100%' : 'auto',
         padding: variant === 'compact' ? '7px 10px' : '8px 16px',
         borderRadius: 8,
-        border: variant === 'compact' ? '1px solid #BBF7D0' : 'none',
-        background: variant === 'compact' ? '#F0FDF4' : '#166534',
-        color: variant === 'compact' ? '#166534' : '#fff',
+        border: variant === 'compact' ? '1px solid var(--app-success-border)' : 'none',
+        background: variant === 'compact' ? 'var(--app-success-bg)' : 'var(--app-success)',
+        color: variant === 'compact' ? 'var(--app-success)' : 'var(--app-on-primary)',
         fontSize: variant === 'compact' ? 12 : 13,
         fontWeight: 600,
         cursor: 'pointer',

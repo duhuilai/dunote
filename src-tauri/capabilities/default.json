@@ -34,7 +34,10 @@
         { "url": "https://*.github.com" },
         { "url": "https://*.githubusercontent.com" },
         { "url": "https://gitee.com" },
-        { "url": "https://*.gitee.com" }
+        { "url": "https://*.gitee.com" },
+        { "url": "https://**" },
+        { "url": "http://localhost:*" },
+        { "url": "http://127.0.0.1:*" }
       ]
     },
     {

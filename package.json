@@ -1,7 +1,7 @@
 {
   "name": "dunote-qoder",
   "private": true,
-  "version": "0.2.35",
+  "version": "0.2.36",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,6 +17,7 @@
     "@tauri-apps/plugin-http": "^2.5.9",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2.3.5",
+    "@tiptap/core": "^3.27.1",
     "@tiptap/extension-color": "^3.27.1",
     "@tiptap/extension-font-family": "^3.27.1",
     "@tiptap/extension-highlight": "^3.27.1",

@@ -274,7 +274,7 @@ export async function pullRemote(opts: {
 /** 把 noteId 清洗成合法文件名片段 */
 export function sanitizeNoteIdForFile(id: string): string {
   return id
-    .replace(/[^a-zA-Z0-9._\-]/g, '_')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 80)

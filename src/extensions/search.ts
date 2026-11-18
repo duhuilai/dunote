@@ -24,7 +24,7 @@ export interface SearchPluginState {
 export const searchPluginKey = new PluginKey<SearchPluginState>('dunoteSearch')
 
 // 单元格值转可检索文本（智能表格字段类型多样）
-function cellSearchText(v: any, t: string): string {
+function cellSearchText(v: any, _t: string): string {
   if (v === null || v === undefined || v === '') return ''
   if (typeof v === 'boolean') return v ? '是' : ''
   if (Array.isArray(v)) return v.filter((x) => x != null && x !== '').join(',')
@@ -151,7 +151,7 @@ export const SearchExtension = Extension.create({
             return DecorationSet.create(state.doc, decos)
           },
         },
-        view(editorView) {
+        view(_editorView) {
           return {
             update(view, prevState) {
               const s = searchPluginKey.getState(view.state)
