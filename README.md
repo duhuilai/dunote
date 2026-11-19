@@ -21,7 +21,7 @@
 - 🌐 **多端同步**: 支持 Git/Gitee 同步（开发中）
 - 🎨 **品牌设计**: 主色 #2563EB + 辅色 #06B6D4
 
-AI 助手支持 OpenAI、DeepSeek、Ollama 及其他兼容服务。供应商名称、Base URL、API Key、接口协议、文本模型和录音转写模型均可在设置中配置，也可以完全关闭 AI 功能。
+AI 助手支持 OpenAI、千问AI平台、DeepSeek、Ollama 及其他兼容服务。供应商名称、Base URL、API Key、接口协议、文本模型和录音转写模型均可在设置中配置，也可以完全关闭 AI 功能。
 
 ## 技术栈
 
@@ -39,7 +39,7 @@ AI 助手支持 OpenAI、DeepSeek、Ollama 及其他兼容服务。供应商名�
 ### 前置要求
 
 - Node.js >= 18
-- Rust >= 1.70 (用于 Tauri 构建)
+- Rust >= 1.90 (用于 Tauri 构建)
 - Windows: Visual Studio Build Tools 2019+
 - macOS: Xcode Command Line Tools
 

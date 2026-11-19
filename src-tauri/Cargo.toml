@@ -1,12 +1,12 @@
 [package]
 name = "app"
-version = "0.2.36"
+version = "0.2.37"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
 repository = ""
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.90"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -26,7 +26,7 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
-tauri-plugin-http = "2"
+tauri-plugin-http = "=2.9.0"
 tauri-plugin-process = "2"
 # 持久化运行时文件系统 scope：用户通过对话框授权过的目录在重启 / 升级后依然有效
 # macOS 上会以 security-scoped bookmark 形式保存，避免每次都要重新选择文件夹

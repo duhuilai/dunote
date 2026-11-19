@@ -23,6 +23,10 @@ const DEFAULT_TIMEOUT_MS = 60000
 const MAX_ERROR_DETAIL_LENGTH = 600
 const NOTE_CONTEXT_LIMIT = 26000
 const TRANSCRIPT_CONTEXT_LIMIT = 80000
+const QIANWEN_HOST_CORRECTIONS: Record<string, string> = {
+  'maas.qianwenai.com': 'maas.qianwenaiapi.com',
+  'token-plan.maas.qianwenai.com': 'token-plan.maas.qianwenaiapi.com',
+}
 
 export class AiServiceError extends Error {
   constructor(message: string) {
@@ -46,6 +50,14 @@ export function validateAiBaseUrl(rawValue: string): {
     url = new URL(value)
   } catch {
     return { ok: false, message: 'API Base URL 格式无效' }
+  }
+
+  const correctedQianwenHost = QIANWEN_HOST_CORRECTIONS[url.hostname]
+  if (correctedQianwenHost) {
+    return {
+      ok: false,
+      message: `千问AI平台域名应为 ${correctedQianwenHost}（当前地址少了 api），请重新选择供应商预设`,
+    }
   }
 
   const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
@@ -179,6 +191,9 @@ async function executeRequest(
       throw new AiServiceError(`AI 请求超时（${Math.round(timeoutFor(config) / 1000)} 秒），请检查网络或供应商状态`)
     }
     const reason = error instanceof Error ? error.message : String(error)
+    if (reason.includes('missing client-config header')) {
+      throw new AiServiceError('桌面端网络组件版本不匹配，请安装最新版本后重试')
+    }
     throw new AiServiceError(`无法连接 AI 服务：${sanitizeDetail(reason, config)}`)
   } finally {
     window.clearTimeout(timeout)

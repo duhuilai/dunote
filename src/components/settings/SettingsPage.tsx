@@ -29,7 +29,7 @@ const themeOptions = [
   { key: 'system', label: '跟随系统', icon: Monitor },
 ] as const
 
-type AiProviderPreset = 'openai' | 'deepseek' | 'ollama' | 'custom'
+type AiProviderPreset = 'openai' | 'deepseek' | 'qianwen-token-plan' | 'qianwen-api' | 'ollama' | 'custom'
 
 const aiProviderPresets: Array<{
   key: AiProviderPreset
@@ -57,6 +57,32 @@ const aiProviderPresets: Array<{
       baseUrl: 'https://api.deepseek.com/v1',
       apiProtocol: 'chat-completions',
       chatModel: 'deepseek-chat',
+      transcriptionModel: '',
+      supportsChat: true,
+      supportsTranscription: false,
+    },
+  },
+  {
+    key: 'qianwen-token-plan',
+    label: '千问AI平台（Token Plan）',
+    config: {
+      providerName: '千问AI平台 Token Plan',
+      baseUrl: 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1',
+      apiProtocol: 'chat-completions',
+      chatModel: 'qwen3.8-flash',
+      transcriptionModel: '',
+      supportsChat: true,
+      supportsTranscription: false,
+    },
+  },
+  {
+    key: 'qianwen-api',
+    label: '千问AI平台（按量计费）',
+    config: {
+      providerName: '千问AI平台',
+      baseUrl: 'https://maas.qianwenaiapi.com/compatible-mode/v1',
+      apiProtocol: 'chat-completions',
+      chatModel: 'qwen3.8-flash',
       transcriptionModel: '',
       supportsChat: true,
       supportsTranscription: false,
@@ -416,7 +442,7 @@ export default function SettingsPage() {
                   lineHeight: 1.7,
                 }}
               >
-                支持 OpenAI-compatible 接口，可接入 OpenAI、DeepSeek、Ollama 或其他兼容服务。
+                支持 OpenAI-compatible 接口，可接入 OpenAI、千问AI平台、DeepSeek、Ollama 或其他兼容服务。
                 远程服务必须使用 HTTPS；API Key 仅保存在当前设备的设置文件中，不会写入笔记。
               </div>
 
@@ -495,7 +521,8 @@ export default function SettingsPage() {
                   autoComplete="off"
                 />
                 <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--app-text-muted)', lineHeight: 1.6 }}>
-                  本机 Ollama 示例：<code>http://localhost:11434/v1</code>，通常无需 API Key。
+                  本机 Ollama 示例：<code>http://localhost:11434/v1</code>，通常无需 API Key。千问地址中的域名应为
+                  <code>maas.qianwenaiapi.com</code>（包含 <code>api</code>）。
                 </div>
               </div>
 
